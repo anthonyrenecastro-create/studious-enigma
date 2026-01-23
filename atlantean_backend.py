@@ -22,7 +22,7 @@ load_dotenv('.env.local')
 from atlantean_quadra_bridge import AtlanteanQuadraBridge, QuadraLearningEvent
 
 # Configure Gemini
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') or os.getenv('VITE_GEMINI_API_KEY')
 if GEMINI_API_KEY and GEMINI_API_KEY != 'PLACEHOLDER_API_KEY':
     client = genai.Client(api_key=GEMINI_API_KEY)
     print(f"✅ Gemini API configured")
