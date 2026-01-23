@@ -276,6 +276,8 @@ const ChatInterface: React.FC = () => {
             
             // Apply learning signal for successful interaction
             await triggerLearningEvent('user_confirmation').catch(() => {});
+            
+            setIsLoading(false);
             return;
         }
 
@@ -384,22 +386,10 @@ const ChatInterface: React.FC = () => {
           >
             Archives
           </button>
-          <button 
-            onClick={() => setSidebarTab('atlantean' as any)}
-            className={`flex-1 py-3 text-[9px] font-bold uppercase tracking-[0.3em] rounded-lg transition-all ${sidebarTab === 'atlantean' as any ? 'bg-white/10 text-purple-400' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            🧠 Core
-          </button>
         </div>
         
         {sidebarTab === 'telemetry' ? (
           <SimulationVisualizer history={simulationHistory} messages={messages} />
-        ) : sidebarTab === 'atlantean' as any ? (
-          <AtlanteanStatusPanel 
-            status={atlantean.status} 
-            fields={atlantean.fields}
-            isLoading={atlantean.isLoading}
-          />
         ) : (
           <NeuralArchives currentConvoId={convoId} onSelectConvo={loadSession} onNewConvo={startNewSession} />
         )}
@@ -417,7 +407,7 @@ const ChatInterface: React.FC = () => {
                         <div className="flex items-center gap-2 mt-1 cursor-pointer group" onClick={syncAudio}>
                             <span className={`w-1.5 h-1.5 rounded-full ${audioState === 'running' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500 animate-pulse'}`}></span>
                             <span className="text-[9px] font-mono uppercase tracking-widest text-gray-500 group-hover:text-gray-300 transition-colors">
-                                {audioState === 'running' ? 'Intelligence Synced' : 'Sync Link'}
+                                {audioState === 'running' ? 'Intelligence Linked' : 'Link Audio'}
                             </span>
                         </div>
                     </div>

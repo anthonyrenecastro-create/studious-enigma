@@ -52,7 +52,24 @@ export const streamChatResponse = async (
     files: FileData[],
     mode: ThinkingMode
 ): Promise<any> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem('gemini_api_key');
+
+    // If no API key is available, return a graceful placeholder so the UI doesn't crash
+    if (!apiKey) {
+        return {
+            candidates: [
+                {
+                    content: {
+                        parts: [
+                            { text: 'Gemini API key missing. Add VITE_GEMINI_API_KEY or store a key in localStorage under "gemini_api_key".' }
+                        ]
+                    }
+                }
+            ]
+        } as any;
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
     const systemInstruction = getSystemInstruction(mode);
     
     if (isImageRequest(newMessage)) {
