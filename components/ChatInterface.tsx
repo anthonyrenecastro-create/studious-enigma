@@ -127,8 +127,8 @@ const ChatInterface: React.FC = () => {
   const handleLearningFeedback = useCallback(async (messageId: string, feedback: 'positive' | 'negative' | 'correction') => {
     // Map feedback to learning events
     const eventMap = {
-      'positive': 'user_confirmation',
-      'negative': 'user_correction',
+      'positive': 'user_positive_feedback',
+      'negative': 'user_negative_feedback',
       'correction': 'user_correction'
     } as const;
     
@@ -282,7 +282,7 @@ const ChatInterface: React.FC = () => {
         }
 
         // Otherwise try Gemini directly (requires API key)
-        const result = await streamChatResponse(nextMessages, currentInput, currentFiles, thinkingMode);
+        const result = await streamChatResponse(nextMessages, currentInput, currentFiles, thinkingMode, userProfile, messages);
         
         if (result && result.candidates) {
             const candidate = result.candidates[0];
@@ -438,9 +438,9 @@ const ChatInterface: React.FC = () => {
             {messages.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 opacity-30 text-center px-8">
                 <Icon name="sparkles" className="w-20 h-20 mb-8 text-[var(--color-primary)]" />
-                <h2 className="text-2xl font-black uppercase tracking-[0.4em] text-white">Intelligence Ready</h2>
+                <h2 className="text-2xl font-black uppercase tracking-[0.4em] text-white">Ready to Chat</h2>
                 <p className="mt-4 text-[10px] uppercase max-w-sm tracking-widest leading-loose text-gray-400 font-mono">
-                    System stabilized in {thinkingMode} mode. Awaiting predictive parameters or visualization requests.
+                    I'm here to help with anything you need. Ask me questions, share your thoughts, or let's explore ideas together!
                 </p>
                 </div>
             )}
@@ -485,7 +485,7 @@ const ChatInterface: React.FC = () => {
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-                    placeholder="Enter intelligence parameters..."
+                    placeholder="What's on your mind? Ask me anything..."
                     className="w-full p-4 pr-32 bg-white/5 border border-white/10 rounded-2xl resize-none focus:outline-none focus:border-[var(--color-primary)]/50 text-sm h-14 scrollbar-hide text-white font-mono placeholder-gray-700 transition-all"
                     />
                     <div className="absolute right-2 bottom-2 flex items-center gap-1.5 p-1">

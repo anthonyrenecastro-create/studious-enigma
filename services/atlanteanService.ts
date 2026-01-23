@@ -44,10 +44,15 @@ export interface QueryResponse {
 export type LearningEventType =
   | 'user_confirmation'
   | 'user_correction'
+  | 'user_positive_feedback'
+  | 'user_negative_feedback'
   | 'prediction_success'
   | 'prediction_failure'
   | 'simulation_complete'
   | 'voice_session_end'
+  | 'helpful_response'
+  | 'unhelpful_response'
+  | 'clarification_needed'
   | 'high_engagement'
   | 'low_engagement';
 

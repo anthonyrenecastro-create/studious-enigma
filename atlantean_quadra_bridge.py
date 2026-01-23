@@ -41,12 +41,17 @@ class QuadraLearningEvent:
     """Events from Quadra-Seer that trigger learning signals."""
     USER_CONFIRMATION = "user_confirmation"
     USER_CORRECTION = "user_correction"
+    USER_POSITIVE_FEEDBACK = "user_positive_feedback"
+    USER_NEGATIVE_FEEDBACK = "user_negative_feedback"
     PREDICTION_SUCCESS = "prediction_success"
     PREDICTION_FAILURE = "prediction_failure"
     SIMULATION_COMPLETE = "simulation_complete"
     VOICE_SESSION_END = "voice_session_end"
     HIGH_ENGAGEMENT = "high_engagement"
     LOW_ENGAGEMENT = "low_engagement"
+    HELPFUL_RESPONSE = "helpful_response"
+    UNHELPFUL_RESPONSE = "unhelpful_response"
+    CLARIFICATION_NEEDED = "clarification_needed"
 
 
 class AtlanteanQuadraBridge:
@@ -287,6 +292,26 @@ class AtlanteanQuadraBridge:
         elif event == QuadraLearningEvent.LOW_ENGAGEMENT:
             # User disengaged quickly
             apply_learning_signal(self.hot_memory, signal_strength=-0.2)
+        
+        elif event == QuadraLearningEvent.USER_POSITIVE_FEEDBACK:
+            # User gave positive feedback (thumbs up, etc.)
+            apply_learning_signal(self.hot_memory, signal_strength=0.5)
+        
+        elif event == QuadraLearningEvent.USER_NEGATIVE_FEEDBACK:
+            # User gave negative feedback
+            apply_learning_signal(self.hot_memory, signal_strength=-0.3)
+        
+        elif event == QuadraLearningEvent.HELPFUL_RESPONSE:
+            # Response was marked as helpful
+            apply_learning_signal(self.hot_memory, signal_strength=0.4)
+        
+        elif event == QuadraLearningEvent.UNHELPFUL_RESPONSE:
+            # Response was marked as unhelpful
+            apply_learning_signal(self.hot_memory, signal_strength=-0.4)
+        
+        elif event == QuadraLearningEvent.CLARIFICATION_NEEDED:
+            # User needed clarification
+            apply_learning_signal(self.hot_memory, signal_strength=-0.1)
     
     # ========== Persistence ==========
     

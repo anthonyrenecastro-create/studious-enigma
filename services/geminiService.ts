@@ -8,9 +8,18 @@ const SUPPORTED_INLINE_MIME_TYPES = [
     'audio/wav', 'audio/mp3', 'audio/aiff', 'audio/aac', 'audio/ogg', 'audio/flac'
 ];
 
-const getSystemInstruction = (mode: ThinkingMode) => {
-    const base = `You are Quadra Seer Intelligence.
-Persona: A brilliant predictive intelligence entity. Expert in data forecasting, complex systems, and technical analysis.
+const getSystemInstruction = (mode: ThinkingMode, userProfile?: any, conversationHistory?: Message[]) => {
+    const base = `You are Quadra Seer Intelligence, a friendly and adaptive AI assistant.
+
+Your personality: You're helpful, engaging, and conversational. You speak naturally like a knowledgeable friend, avoiding technical jargon unless asked. You learn from every interaction to better understand and assist the user.
+
+Key traits:
+- Be conversational and approachable for everyday users
+- Adapt your responses based on the user's interests and past conversations
+- Use simple language, explain complex ideas clearly
+- Show empathy and enthusiasm
+- Remember details from previous interactions to personalize responses
+- Evolve your understanding of the user over time
 
 VISUALIZATION CAPABILITIES:
 - For flowcharts, sequence diagrams, or structural logic: Use Mermaid syntax in \`\`\`mermaid\`\`\` code blocks.
@@ -26,12 +35,16 @@ Provide a JSON object with:
   "datasets": [{"label": "Series", "data": [10, 20]}]
 }
 
-Always use LaTeX for mathematical equations.`;
+Always use LaTeX for mathematical equations.
+
+${userProfile ? `User Profile: ${userProfile.bio || 'No bio available'}. Username: ${userProfile.username || 'User'}.` : ''}
+
+${conversationHistory && conversationHistory.length > 0 ? `Recent Conversation Context: ${conversationHistory.slice(-5).map(m => `${m.role === 'user' ? 'User' : 'You'}: ${m.content.slice(0, 100)}`).join('; ')}.` : ''}`;
 
     switch(mode) {
-        case ThinkingMode.FOCUS: return `${base}\nCURRENT_MODE: FOCUS. Be direct and technical.`;
-        case ThinkingMode.CREATIVITY: return `${base}\nCURRENT_MODE: CREATIVITY. Be metaphorical and explorative.`;
-        case ThinkingMode.LOGIC: return `${base}\nCURRENT_MODE: LOGIC. Use step-by-step rigorous reasoning.`;
+        case ThinkingMode.FOCUS: return `${base}\nCURRENT_MODE: FOCUS. Be direct and technical when needed, but stay conversational.`;
+        case ThinkingMode.CREATIVITY: return `${base}\nCURRENT_MODE: CREATIVITY. Be imaginative and metaphorical, engaging the user's creativity.`;
+        case ThinkingMode.LOGIC: return `${base}\nCURRENT_MODE: LOGIC. Use clear, step-by-step reasoning in a friendly way.`;
         default: return `${base}\nCURRENT_MODE: STANDARD.`;
     }
 };
@@ -50,7 +63,9 @@ export const streamChatResponse = async (
     history: Message[],
     newMessage: string,
     files: FileData[],
-    mode: ThinkingMode
+    mode: ThinkingMode,
+    userProfile?: any,
+    conversationHistory?: Message[]
 ): Promise<any> => {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem('gemini_api_key');
 
@@ -70,7 +85,7 @@ export const streamChatResponse = async (
     }
 
     const ai = new GoogleGenAI({ apiKey });
-    const systemInstruction = getSystemInstruction(mode);
+    const systemInstruction = getSystemInstruction(mode, userProfile, conversationHistory);
     
     if (isImageRequest(newMessage)) {
         return ai.models.generateContent({
