@@ -64,7 +64,7 @@ def get_bridge_for_session(session_id):
 @app.route('/api/atlantean/status', methods=['GET'])
 def status():
     """Get current intelligence status."""
-    session_id = session.sid or 'default'
+    session_id = request.args.get('session_id') or session.sid or 'default'
     b = get_bridge_for_session(session_id)
     return jsonify(b.get_status())
 
@@ -188,22 +188,24 @@ def learning_event():
     
     Request body:
     {
+        "session_id": "optional session id",
         "event": "user_confirmation" | "user_correction" | etc.,
         "data": { ... event-specific data ... }
     }
     """
     data = request.json
+    session_id = data.get('session_id') or session.sid or 'default'
     event = data.get('event')
     event_data = data.get('data', {})
     
     if not event:
         return jsonify({'error': 'No event type provided'}), 400
     
-    b = get_bridge()
+    b = get_bridge_for_session(session_id)
     
     try:
         b.on_event(event, **event_data)
-        b.save_state('quadra_intelligence.bin')
+        b.save_state(f'quadra_intelligence_{session_id}.bin')
         
         return jsonify({
             'success': True,

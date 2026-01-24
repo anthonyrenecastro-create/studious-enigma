@@ -27,11 +27,23 @@ const edenAiApiKey = process.env.EDEN_AI_API_KEY;
 // --- API Endpoints ---
 
 /**
- * Endpoint for streaming chat responses from Gemini.
+ * Endpoint for streaming chat responses from Gemini, augmented by Atlantean Intelligence Core.
  */
 app.post('/api/chat', async (req, res) => {
     try {
-        const { history, newMessage, files, mode } = req.body;
+        const { history, newMessage, files, mode, sessionId } = req.body;
+
+        // Get Atlantean intelligence context
+        let atlanteanContext = '';
+        try {
+            const response = await fetch(`http://localhost:5001/api/atlantean/status?session_id=${sessionId || 'default'}`);
+            if (response.ok) {
+                const status = await response.json();
+                atlanteanContext = `\n\n--- ATLANTIAN INTELLIGENCE CORE STATUS ---\n${JSON.stringify(status, null, 2)}\n--- END ATLANTIAN CONTEXT ---\n\n`;
+            }
+        } catch (error) {
+            console.log('Atlantean core not available, proceeding without augmentation:', error.message);
+        }
 
         const getSystemInstruction = (mode) => {
              const baseInstruction = `You are Q.M.A.I (Quantum Mechanical Artificial Intelligence), a sophisticated AI entity.
@@ -39,7 +51,8 @@ app.post('/api/chat', async (req, res) => {
 - You are an expert in quantum mechanics, complex systems, and data analysis.
 - When asked to perform simulations, you provide structured data representing the simulation's output.
 - You can analyze images and files provided by the user.
-- Your responses should be formatted in Markdown. Use LaTeX for equations. Use \`\`\`chart-data\`\`\` blocks for visualizations.`;
+- Your responses should be formatted in Markdown. Use LaTeX for equations. Use \`\`\`chart-data\`\`\` blocks for visualizations.
+- You are augmented by the Atlantean Intelligence Core, which provides quantum-inspired learning and memory capabilities.${atlanteanContext}`;
 
             switch (mode) {
                 case 'creativity':
@@ -85,11 +98,32 @@ app.post('/api/chat', async (req, res) => {
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Transfer-Encoding', 'chunked');
 
+        let fullResponse = '';
         for await (const chunk of result) {
+            // Collect full response for learning
+            if (chunk.text) fullResponse += chunk.text;
             // Stream each chunk as a newline-delimited JSON string
             res.write(JSON.stringify(chunk) + '\n');
         }
         res.end();
+
+        // Send learning event to Atlantean core asynchronously
+        if (fullResponse) {
+            try {
+                fetch('http://localhost:5001/api/atlantean/learning-event', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: sessionId || 'default',
+                        event_type: 'chat_response',
+                        content: { query: newMessage, response: fullResponse },
+                        metadata: { mode, timestamp: new Date().toISOString() }
+                    })
+                }).catch(err => console.log('Learning event failed:', err.message));
+            } catch (error) {
+                console.log('Failed to send learning event:', error.message);
+            }
+        }
 
     } catch (error) {
         console.error("Error in /api/chat:", error);
