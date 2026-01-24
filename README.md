@@ -25,3 +25,15 @@ View your app in AI Studio: https://ai.studio/apps/drive/12CDszUJAxwc5CBTjwFTX8I
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## Licensing
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+If you use this software to provide a networked service (e.g. SaaS, APIs, hosted applications),
+you are required to make the complete corresponding source code available to users of that service,
+as required by the AGPL.
+
+Commercial licensing is available for organizations that cannot comply with AGPL requirements.
+
+For commercial licensing inquiries, contact: anthony.rene.castro@modulusequalibra.org
