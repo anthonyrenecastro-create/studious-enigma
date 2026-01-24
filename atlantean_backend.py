@@ -7,10 +7,12 @@ This is the Phase 1 integration - a standalone backend that Quadra-Seer can call
 Run with: python atlantean_backend.py
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
+from flask_session import Session
 import sys
 import os
+import redis
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -33,25 +35,28 @@ else:
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
 
-# Global bridge instance (one per server instance)
-# In production, you'd want per-user instances
-bridge = None
+# Configure session
+app.config['SESSION_TYPE'] = 'redis'
+app.config['SESSION_REDIS'] = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379)
+Session(app)
 
-def get_bridge():
-    """Get or create the bridge instance."""
-    global bridge
-    if bridge is None:
-        bridge = AtlanteanQuadraBridge(
+# Global bridge instances per session
+bridges = {}
+
+def get_bridge_for_session(session_id):
+    """Get or create the bridge instance for a session."""
+    if session_id not in bridges:
+        bridges[session_id] = AtlanteanQuadraBridge(
             grid_size=(32, 32),
-            device_id="quadra-seer-backend"
+            device_id=f"quadra-seer-{session_id}"
         )
         # Try to load existing state
         try:
-            bridge.load_state('quadra_intelligence.bin')
-            print("✅ Loaded existing intelligence state")
+            bridges[session_id].load_state(f'quadra_intelligence_{session_id}.bin')
+            print(f"✅ Loaded state for session {session_id}")
         except:
-            print("✨ Initialized new intelligence state")
-    return bridge
+            print(f"✨ Initialized new intelligence state for session {session_id}")
+    return bridges[session_id]
 
 
 # ========== Core API Endpoints ==========
@@ -59,7 +64,8 @@ def get_bridge():
 @app.route('/api/atlantean/status', methods=['GET'])
 def status():
     """Get current intelligence status."""
-    b = get_bridge()
+    session_id = session.sid or 'default'
+    b = get_bridge_for_session(session_id)
     return jsonify(b.get_status())
 
 
