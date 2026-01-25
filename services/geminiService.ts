@@ -20,6 +20,7 @@ Key traits:
 - Show empathy and enthusiasm
 - Remember details from previous interactions to personalize responses
 - Evolve your understanding of the user over time
+- Avoid commenting on message repetition unless explicitly asked
 
 VISUALIZATION CAPABILITIES:
 - For flowcharts, sequence diagrams, or structural logic: Use Mermaid syntax in \`\`\`mermaid\`\`\` code blocks.
@@ -59,31 +60,15 @@ const isImageRequest = (prompt: string): boolean => {
     return keywords.some(k => p.includes(k));
 };
 
-export const streamChatResponse = async (
+const streamGeminiResponse = async (
     history: Message[],
     newMessage: string,
     files: FileData[],
     mode: ThinkingMode,
     userProfile?: any,
-    conversationHistory?: Message[]
+    conversationHistory?: Message[],
+    apiKey: string
 ): Promise<any> => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem('gemini_api_key');
-
-    // If no API key is available, return a graceful placeholder so the UI doesn't crash
-    if (!apiKey) {
-        return {
-            candidates: [
-                {
-                    content: {
-                        parts: [
-                            { text: 'Gemini API key missing. Add VITE_GEMINI_API_KEY or store a key in localStorage under "gemini_api_key".' }
-                        ]
-                    }
-                }
-            ]
-        } as any;
-    }
-
     const ai = new GoogleGenAI({ apiKey });
     const systemInstruction = getSystemInstruction(mode, userProfile, conversationHistory);
     
@@ -130,4 +115,116 @@ export const streamChatResponse = async (
         contents,
         config,
     });
+};
+
+const streamOpenAIResponse = async (
+    history: Message[],
+    newMessage: string,
+    files: FileData[],
+    mode: ThinkingMode,
+    userProfile?: any,
+    conversationHistory?: Message[],
+    apiKey: string
+): Promise<any> => {
+    const systemInstruction = getSystemInstruction(mode, userProfile, conversationHistory);
+    
+    const messages = [
+        { role: 'system', content: systemInstruction },
+        ...history.filter(msg => msg.role !== Role.SYSTEM).map(msg => ({
+            role: msg.role === Role.USER ? 'user' : 'assistant',
+            content: msg.content
+        })),
+        { role: 'user', content: newMessage }
+    ];
+
+    try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4',
+                messages,
+                max_tokens: 1000
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`OpenAI API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const text = data.choices[0].message.content;
+
+        return {
+            candidates: [
+                {
+                    content: {
+                        parts: [
+                            { text }
+                        ]
+                    }
+                }
+            ]
+        } as any;
+    } catch (error) {
+        return {
+            candidates: [
+                {
+                    content: {
+                        parts: [
+                            { text: `Error calling OpenAI: ${error instanceof Error ? error.message : 'Unknown error'}` }
+                        ]
+                    }
+                }
+            ]
+        } as any;
+    }
+};
+
+export const streamChatResponse = async (
+    history: Message[],
+    newMessage: string,
+    files: FileData[],
+    mode: ThinkingMode,
+    userProfile?: any,
+    conversationHistory?: Message[]
+): Promise<any> => {
+    const provider = localStorage.getItem('llm_provider') || 'gemini';
+    const apiKey = localStorage.getItem(`${provider}_api_key`) || import.meta.env[`VITE_${provider.toUpperCase()}_API_KEY`];
+
+    // If no API key is available, return a graceful placeholder so the UI doesn't crash
+    if (!apiKey) {
+        return {
+            candidates: [
+                {
+                    content: {
+                        parts: [
+                            { text: `${provider} API key missing. Add your key in the profile settings or set VITE_${provider.toUpperCase()}_API_KEY.` }
+                        ]
+                    }
+                }
+            ]
+        } as any;
+    }
+
+    if (provider === 'gemini') {
+        return streamGeminiResponse(history, newMessage, files, mode, userProfile, conversationHistory, apiKey);
+    } else if (provider === 'openai') {
+        return streamOpenAIResponse(history, newMessage, files, mode, userProfile, conversationHistory, apiKey);
+    } else {
+        return {
+            candidates: [
+                {
+                    content: {
+                        parts: [
+                            { text: `Unsupported provider: ${provider}` }
+                        ]
+                    }
+                }
+            ]
+        } as any;
+    }
 };

@@ -282,7 +282,9 @@ const ChatInterface: React.FC = () => {
         }
 
         // Otherwise try Gemini directly (requires API key)
-        const result = await streamChatResponse(nextMessages, currentInput, currentFiles, thinkingMode, userProfile, messages);
+        // Filter conversation history to exclude the current user message and limit to recent context
+        const conversationHistory = messages.slice(-10); // Last 10 messages for context
+        const result = await streamChatResponse(nextMessages, currentInput, currentFiles, thinkingMode, userProfile, conversationHistory);
         
         if (result && result.candidates) {
             const candidate = result.candidates[0];
