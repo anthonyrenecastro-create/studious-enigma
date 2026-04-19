@@ -112,7 +112,61 @@ class AtlanteanQuadraBridge:
         self.sync_engine = None
         if self.identity:
             self.sync_engine = AtlanteanSyncEngine(self.identity)
-    
+
+        # Latest HRM snapshot — kept current by callers via set_hrm_snapshot().
+        self._hrm_snapshot: Dict[str, Any] = {}
+
+    # ========== HRM Field Coupling ==========
+
+    def set_hrm_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        """Update the stored HRM snapshot so coupling is always current."""
+        self._hrm_snapshot = snapshot or {}
+
+    def _apply_hrm_field_coupling(self) -> Dict[str, float]:
+        """
+        Isomorphic HRM→field coupling applied from *inside* the bridge.
+
+        Reads the stored HRM snapshot and writes deterministic deltas into
+        hot-memory fields (Φ, φ1, φ5) using the same formula as the backend's
+        standalone helper, so every internal hot-memory update site is covered
+        regardless of whether HRM was stepped at the request-handler level.
+
+        Returns a dict of the applied deltas for logging/ledger payloads.
+        """
+        snap = self._hrm_snapshot
+        coherence = float(snap.get('coherence', 0.0))
+        energy    = float(snap.get('energy',    0.0))
+        channel   = int(snap.get('channel', 0))
+        domain    = int(snap.get('domain',  0))
+        layer     = int(snap.get('layer',   0))
+
+        # Global semantic pressure.
+        phi_delta = torch.tensor(
+            [(coherence * 0.04) - (energy * 0.02)],
+            dtype=self.hot_memory.Phi.dtype,
+        )
+        self.hot_memory.update_Phi(phi_delta)
+
+        # Topology-aware spatial modulation of excitatory (φ1) and plastic (φ5) fields.
+        h, w = self.hot_memory.phi1.shape
+        row_idx = torch.arange(h, dtype=self.hot_memory.phi1.dtype).unsqueeze(1)
+        col_idx = torch.arange(w, dtype=self.hot_memory.phi1.dtype).unsqueeze(0)
+        focus = (((row_idx % 4) == (channel % 4)).to(self.hot_memory.phi1.dtype) *
+                 ((col_idx % 4) == (domain  % 4)).to(self.hot_memory.phi1.dtype))
+
+        exc_delta     = focus * (((coherence - 0.5) * 0.01) + ((layer - 1.5) * 0.0025))
+        plastic_delta = focus * (((0.5 - min(max(energy, 0.0), 1.0)) * 0.008) +
+                                 ((domain - 1.5) * 0.0015))
+
+        self.hot_memory.update_phi1(exc_delta)
+        self.hot_memory.update_phi5(plastic_delta)
+
+        return {
+            'phi_delta':          float(phi_delta.item()),
+            'exc_delta_mean':     float(exc_delta.mean().item()),
+            'plastic_delta_mean': float(plastic_delta.mean().item()),
+        }
+
     # ========== Core Query Interface ==========
     
     async def query(
@@ -292,8 +346,12 @@ class AtlanteanQuadraBridge:
         selected = memories[:limit]
 
         # Reinforce hot memory when useful recall exists, tying cold recall into core state.
+        # Apply full isomorphic HRM coupling instead of a flat scalar so topology is respected.
         if selected:
-            self.hot_memory.update_Phi(torch.tensor([min(len(selected), 6) * 0.02]))
+            if self._hrm_snapshot:
+                self._apply_hrm_field_coupling()
+            else:
+                self.hot_memory.update_Phi(torch.tensor([min(len(selected), 6) * 0.02]))
 
         return selected
 
@@ -382,7 +440,11 @@ class AtlanteanQuadraBridge:
             List of simulation dicts
         """
         results = self.bridge.recall(query)
-        
+        # bridge.recall() already applies learning-pressure to Φ; now additionally
+        # apply topology-aware HRM coupling so φ1/φ5 are also modulated here.
+        if self._hrm_snapshot:
+            self._apply_hrm_field_coupling()
+
         simulations = []
         for match in results[:limit]:
             item = match.item

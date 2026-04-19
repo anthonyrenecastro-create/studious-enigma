@@ -327,37 +327,14 @@ def _deterministic_replay_proof(session_id: str, bridge: 'AtlanteanQuadraBridge'
 
 def _apply_hrm_field_coupling(bridge: 'AtlanteanQuadraBridge', hrm_snapshot: Dict[str, Any]) -> Dict[str, float]:
     """
-    Deterministically couple HRM dynamical state into Atlantean fields.
-    This creates an actual bridge between field operation and HRM topology.
+    Delegate to the bridge's own isomorphic coupling method.
+
+    Stores the snapshot on the bridge first so that any subsequent internal
+    hot-memory update (e.g. inside recall_chat_memory / recall_simulations)
+    also uses the current HRM topology, not stale defaults.
     """
-    coherence = float(hrm_snapshot.get('coherence', 0.0))
-    energy = float(hrm_snapshot.get('energy', 0.0))
-    channel = int(hrm_snapshot.get('channel', 0))
-    domain = int(hrm_snapshot.get('domain', 0))
-    layer = int(hrm_snapshot.get('layer', 0))
-
-    # Global semantic pressure from coherence/energy.
-    phi_delta = torch.tensor([(coherence * 0.04) - (energy * 0.02)], dtype=bridge.hot_memory.Phi.dtype)
-    bridge.hot_memory.update_Phi(phi_delta)
-
-    # Topology-aware deterministic modulation fields.
-    h, w = bridge.hot_memory.phi1.shape
-    row_idx = torch.arange(h, dtype=bridge.hot_memory.phi1.dtype).unsqueeze(1)
-    col_idx = torch.arange(w, dtype=bridge.hot_memory.phi1.dtype).unsqueeze(0)
-    row_gate = ((row_idx % 4) == (channel % 4)).to(bridge.hot_memory.phi1.dtype)
-    col_gate = ((col_idx % 4) == (domain % 4)).to(bridge.hot_memory.phi1.dtype)
-    focus = row_gate * col_gate
-
-    exc_delta = focus * (((coherence - 0.5) * 0.01) + ((layer - 1.5) * 0.0025))
-    plastic_delta = focus * (((0.5 - min(max(energy, 0.0), 1.0)) * 0.008) + ((domain - 1.5) * 0.0015))
-
-    bridge.hot_memory.update_phi1(exc_delta)
-    bridge.hot_memory.update_phi5(plastic_delta)
-    return {
-        'phi_delta': float(phi_delta.item()),
-        'exc_delta_mean': float(exc_delta.mean().item()),
-        'plastic_delta_mean': float(plastic_delta.mean().item()),
-    }
+    bridge.set_hrm_snapshot(hrm_snapshot)
+    return bridge._apply_hrm_field_coupling()
 
 
 def _save_bridge_to_redis(session_id: str, bridge: 'AtlanteanQuadraBridge'):
