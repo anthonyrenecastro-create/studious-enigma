@@ -1,6 +1,19 @@
 # learning.py
 import torch
 
+
+def _deterministic_modulation(field: torch.Tensor) -> torch.Tensor:
+    """
+    Build a deterministic spatial modulation map in [0.5, 1.5].
+
+    This replaces stochastic noise so updates are replayable across runs.
+    """
+    h, w = field.shape
+    rows = torch.arange(h, dtype=field.dtype, device=field.device).unsqueeze(1)
+    cols = torch.arange(w, dtype=field.dtype, device=field.device).unsqueeze(0)
+    # Bounded periodic pattern; no RNG involved.
+    return 1.0 + 0.5 * torch.sin((rows + 1.0) * 0.17) * torch.cos((cols + 1.0) * 0.11)
+
 def apply_learning_signal(hot_memory, signal_strength: float):
     """
     Apply a learning signal to the Atlantean hot memory fields.
@@ -32,10 +45,10 @@ def apply_learning_signal(hot_memory, signal_strength: float):
         - Stabilizes Φ (global meaning)
         - Increments version counter
     """
-    # Reinforce plasticity field with stochastic modulation
-    # This is WHERE things get remembered, not WHAT gets remembered
-    noise = torch.randn_like(hot_memory.phi5) * 0.01
-    hot_memory.phi5 += signal_strength * noise
+    # Reinforce plasticity field with deterministic modulation.
+    # This preserves replayability and cryptographic verifiability.
+    modulation = _deterministic_modulation(hot_memory.phi5)
+    hot_memory.phi5 += signal_strength * modulation * 0.01
 
     # Decision topology slowly reshapes based on plasticity
     # Strong plasticity → decision boundaries adapt

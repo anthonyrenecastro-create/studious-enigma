@@ -5,7 +5,7 @@
  * This replaces traditional state management with field-based intelligence.
  */
 
-const ATLANTEAN_API_BASE = 'http://localhost:5001/api/atlantean';
+const ATLANTEAN_API_BASE = import.meta.env.VITE_ATLANTEAN_API_BASE || '/api/atlantean';
 
 export interface AtlanteanStatus {
   device_id: string;
@@ -39,6 +39,28 @@ export interface FieldData {
 export interface QueryResponse {
   response: string;
   status: AtlanteanStatus;
+}
+
+export interface ColdManifest {
+  manifest_id: string;
+  attached_at?: number;
+  detached_at?: number | null;
+  detached?: boolean;
+  item_ids?: string[];
+  metadata?: Record<string, any>;
+}
+
+export interface ReplayIntegrityProof {
+  session_id: string;
+  events_total: number;
+  events_verified: number;
+  replay_state_hash: string | null;
+  live_state_hash: string;
+  match: boolean;
+  valid: boolean;
+  issues: Array<Record<string, any>>;
+  replay_head_hash: string;
+  verified_up_to_seq: number | null;
 }
 
 export type LearningEventType =
@@ -78,7 +100,9 @@ export async function getStatus(): Promise<AtlanteanStatus> {
 export async function query(
   input: string,
   llmProvider: 'gemini' | 'edenai' | 'mock' = 'gemini',
-  apiKey?: string
+  apiKey?: string,
+  history: Array<{ role: string; content: string }> = [],
+  sessionId?: string
 ): Promise<QueryResponse> {
   const body: any = { 
     input, 
@@ -87,6 +111,14 @@ export async function query(
   
   if (apiKey) {
     body.api_key = apiKey;
+  }
+
+  if (history.length > 0) {
+    body.history = history;
+  }
+
+  if (sessionId) {
+    body.session_id = sessionId;
   }
   
   const response = await fetch(`${ATLANTEAN_API_BASE}/query`, {
@@ -166,25 +198,37 @@ export async function storeSimulation(
 }
 
 /**
- * Recall past simulations from cold memory
+ * List all stored simulations directly from backend (reliable, no embedding)
  */
 export async function recallSimulations(
   searchQuery: string,
-  limit: number = 10
-): Promise<{ simulations: any[] }> {
-  const response = await fetch(`${ATLANTEAN_API_BASE}/simulation/recall`, {
+  limit: number = 50
+): Promise<any[]> {
+  // Prefer /list (direct Redis listing). Fallback to /recall for backward compatibility.
+  const listResponse = await fetch(`${ATLANTEAN_API_BASE}/simulation/list?limit=${limit}`);
+  if (listResponse.ok) {
+    const data = await listResponse.json();
+    return data.simulations || [];
+  }
+
+  if (listResponse.status !== 404) {
+    throw new Error(`Failed to list simulations: ${listResponse.statusText}`);
+  }
+
+  const recallResponse = await fetch(`${ATLANTEAN_API_BASE}/simulation/recall`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ query: searchQuery, limit }),
   });
-  
-  if (!response.ok) {
-    throw new Error(`Failed to recall simulations: ${response.statusText}`);
+
+  if (!recallResponse.ok) {
+    throw new Error(`Failed to recall simulations: ${recallResponse.statusText}`);
   }
-  
-  return response.json();
+
+  const recallData = await recallResponse.json();
+  return recallData.simulations || [];
 }
 
 /**
@@ -205,6 +249,92 @@ export async function createSnapshot(
     throw new Error(`Failed to create snapshot: ${response.statusText}`);
   }
   
+  return response.json();
+}
+
+/**
+ * List cold-memory manifests for detachable memory management
+ */
+export async function listColdManifests(
+  includeDetached: boolean = false,
+  sessionId?: string
+): Promise<{ session_id: string; manifests: ColdManifest[] }> {
+  const params = new URLSearchParams();
+  if (includeDetached) params.set('include_detached', 'true');
+  if (sessionId) params.set('session_id', sessionId);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+
+  const response = await fetch(`${ATLANTEAN_API_BASE}/cold/manifests${suffix}`);
+  if (!response.ok) {
+    throw new Error(`Failed to list cold manifests: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Export a detachable cold-memory manifest bundle
+ */
+export async function exportColdManifest(
+  manifestId: string,
+  sessionId?: string
+): Promise<{ session_id: string; manifest: any }> {
+  const params = new URLSearchParams({ manifest_id: manifestId });
+  if (sessionId) params.set('session_id', sessionId);
+
+  const response = await fetch(`${ATLANTEAN_API_BASE}/cold/manifest/export?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Failed to export cold manifest: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Import a detachable cold-memory manifest bundle
+ */
+export async function importColdManifest(
+  manifest: any,
+  sessionId?: string
+): Promise<{ session_id: string; result: any }> {
+  const body: any = { manifest };
+  if (sessionId) body.session_id = sessionId;
+
+  const response = await fetch(`${ATLANTEAN_API_BASE}/cold/manifest/import`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to import cold manifest: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Tombstone a cold-memory item while preserving lineage
+ */
+export async function tombstoneColdItem(
+  itemId: string,
+  reason: string = 'manual',
+  sessionId?: string
+): Promise<{ success: boolean; session_id: string; item_id: string; reason: string }> {
+  const body: any = {
+    item_id: itemId,
+    reason,
+  };
+  if (sessionId) body.session_id = sessionId;
+
+  const response = await fetch(`${ATLANTEAN_API_BASE}/cold/tombstone`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to tombstone cold item: ${response.statusText}`);
+  }
   return response.json();
 }
 
@@ -280,4 +410,21 @@ export async function checkHealth(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Deterministic replay integrity proof (ledger-derived state hash vs live state hash)
+ */
+export async function replayIntegrityProof(
+  sessionId?: string
+): Promise<ReplayIntegrityProof> {
+  const params = new URLSearchParams();
+  if (sessionId) params.set('session_id', sessionId);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+
+  const response = await fetch(`${ATLANTEAN_API_BASE}/integrity/replay${suffix}`);
+  if (!response.ok) {
+    throw new Error(`Failed replay proof: ${response.statusText}`);
+  }
+  return response.json();
 }

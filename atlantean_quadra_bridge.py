@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'atlantean_core'))
 import torch
 import numpy as np
 import json
+import hashlib
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
@@ -165,12 +166,206 @@ class AtlanteanQuadraBridge:
             content=json.dumps(simulation),
             metadata={
                 'relevance': confidence,
+                'retrieval_weight': confidence,
+                'learning_weight': min(1.0, confidence + 0.1),
+                'manifest_id': 'simulations',
                 'type': 'simulation',
                 'timestamp': datetime.now().isoformat(),
                 'scenario': simulation.get('scenario', 'unknown')
             }
         )
+
+    def store_chat_turn(
+        self,
+        role: str,
+        content: str,
+        session_id: Optional[str] = None,
+        domain: str = 'chat',
+        relevance: float = 0.5,
+    ):
+        """
+        Persist a chat turn into cold memory so recall can work across chats/sessions.
+        """
+        text = (content or '').strip()
+        if not text:
+            return
+
+        payload = {
+            'role': role,
+            'content': text,
+            'session_id': session_id,
+            'domain': domain,
+            'created_at': datetime.now().isoformat(),
+        }
+
+        self.bridge.ingest(
+            content=json.dumps(payload),
+            metadata={
+                'relevance': relevance,
+                'retrieval_weight': relevance,
+                'learning_weight': max(0.0, min(1.0, relevance * 0.9)),
+                'manifest_id': f'session:{session_id or "default"}',
+                'type': 'chat_turn',
+                'role': role,
+                'timestamp': datetime.now().isoformat(),
+                'scenario': f'{role}_turn',
+                'session_id': session_id or 'default',
+                'domain': domain,
+            }
+        )
+
+    def recall_chat_memory(
+        self,
+        query: str,
+        limit: int = 8,
+        session_id: Optional[str] = None,
+        include_simulations: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """
+        Recall memory across sessions/domains using direct Redis scan + lexical scoring.
+        This bypasses weak demo embeddings and gives consistent cross-chat memory retrieval.
+        """
+        query_terms = {t for t in query.lower().split() if len(t) > 2}
+        memories: List[Dict[str, Any]] = []
+
+        try:
+            redis_conn = self.cold_memory.redis
+            item_keys = redis_conn.keys('item:*')
+            for key in item_keys:
+                raw = redis_conn.get(key)
+                if not raw:
+                    continue
+                try:
+                    item_dict = json.loads(raw)
+                    meta = item_dict.get('metadata', {})
+                    if meta.get('tombstone'):
+                        continue
+                    item_type = meta.get('type')
+                    if item_type not in ('chat_turn', 'simulation'):
+                        continue
+                    if item_type == 'simulation' and not include_simulations:
+                        continue
+
+                    text = str(item_dict.get('content', ''))
+                    lowered = text.lower()
+                    overlap = 0
+                    if query_terms:
+                        overlap = sum(1 for t in query_terms if t in lowered)
+
+                    # Score by lexical overlap, metadata relevance, and session continuity.
+                    retrieval_weight = float(meta.get('retrieval_weight', meta.get('relevance', 0.2)))
+                    learning_weight = float(meta.get('learning_weight', meta.get('relevance', 0.2)))
+                    score = retrieval_weight + float(overlap) * 0.2
+                    role = str(meta.get('role', '')).lower()
+                    if role == 'user':
+                        score += 0.25
+                    elif role == 'assistant':
+                        score -= 0.05
+                    if session_id and meta.get('session_id') == session_id:
+                        score += 0.25
+
+                    ts_raw = meta.get('timestamp', '')
+                    try:
+                        ts_ms = int(datetime.fromisoformat(ts_raw).timestamp() * 1000)
+                    except Exception:
+                        ts_ms = int(datetime.now().timestamp() * 1000)
+
+                    memories.append({
+                        'type': item_type,
+                        'role': role,
+                        'score': score,
+                        'timestamp': ts_ms,
+                        'session_id': meta.get('session_id'),
+                        'domain': meta.get('domain', 'chat'),
+                        'relevance': float(meta.get('relevance', 0.0)),
+                        'retrieval_weight': retrieval_weight,
+                        'learning_weight': learning_weight,
+                        'content_raw': text,
+                    })
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f'Failed to recall chat memory: {e}')
+            return []
+
+        memories.sort(key=lambda m: (m['score'], m['timestamp']), reverse=True)
+        selected = memories[:limit]
+
+        # Reinforce hot memory when useful recall exists, tying cold recall into core state.
+        if selected:
+            self.hot_memory.update_Phi(torch.tensor([min(len(selected), 6) * 0.02]))
+
+        return selected
+
+    def extract_recalled_facts(self, recalled_memories: List[Dict[str, Any]], limit: int = 4) -> List[str]:
+        """Extract short, user-centric fact snippets from recalled memories."""
+        facts: List[str] = []
+        for mem in recalled_memories:
+            if mem.get('type') != 'chat_turn':
+                continue
+            if str(mem.get('role', '')).lower() != 'user':
+                continue
+            raw = str(mem.get('content_raw', ''))
+            try:
+                payload = json.loads(raw)
+                text = str(payload.get('content', '')).strip()
+            except Exception:
+                text = raw.strip()
+            if not text:
+                continue
+            # Keep concise and useful for prompt grounding.
+            if len(text) > 180:
+                text = text[:180] + '...'
+            facts.append(text)
+            if len(facts) >= limit:
+                break
+        return facts
     
+    def list_all_simulations(
+        self,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Return all stored simulations directly from Redis without embedding/search.
+        This is reliable regardless of the embedder quality.
+        """
+        simulations = []
+        try:
+            redis_conn = self.cold_memory.redis
+            item_keys = redis_conn.keys('item:*')
+            for key in item_keys:
+                raw = redis_conn.get(key)
+                if not raw:
+                    continue
+                item_dict = json.loads(raw)
+                meta = item_dict.get('metadata', {})
+                if meta.get('tombstone'):
+                    continue
+                if meta.get('type') != 'simulation':
+                    continue
+                try:
+                    sim = json.loads(item_dict['content'])
+                    ts_raw = meta.get('timestamp', '')
+                    try:
+                        from datetime import datetime as _dt
+                        ts_ms = int(_dt.fromisoformat(ts_raw).timestamp() * 1000)
+                    except Exception:
+                        ts_ms = int(datetime.now().timestamp() * 1000)
+                    simulations.append({
+                        'scenario': meta.get('scenario', sim.get('scenario', 'unknown')),
+                        'confidence': meta.get('retrieval_weight', meta.get('relevance', 0.5)),
+                        'learning_effect': meta.get('learning_weight', meta.get('relevance', 0.5)),
+                        'timestamp': ts_ms,
+                        'content': sim,
+                    })
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f'Failed to list simulations from Redis: {e}')
+        # Sort newest first
+        simulations.sort(key=lambda x: x['timestamp'], reverse=True)
+        return simulations[:limit]
+
     def recall_simulations(
         self,
         query: str,
@@ -189,16 +384,49 @@ class AtlanteanQuadraBridge:
         results = self.bridge.recall(query)
         
         simulations = []
-        for item in results[:limit]:
+        for match in results[:limit]:
+            item = match.item
             if item.metadata.get('type') == 'simulation':
                 try:
                     sim = json.loads(item.content)
-                    sim['_metadata'] = item.metadata
-                    simulations.append(sim)
-                except:
+                    # Normalize to the shape the UI expects:
+                    # { scenario, confidence, timestamp (ms number), ...rest }
+                    ts_raw = item.metadata.get('timestamp', '')
+                    try:
+                        from datetime import datetime as _dt
+                        ts_ms = int(_dt.fromisoformat(ts_raw).timestamp() * 1000)
+                    except Exception:
+                        ts_ms = int(datetime.now().timestamp() * 1000)
+
+                    simulations.append({
+                        'scenario': item.metadata.get('scenario', sim.get('scenario', 'unknown')),
+                        'confidence': float(match.retrieval_score),
+                        'learning_effect': float(match.learning_effect_score),
+                        'timestamp': ts_ms,
+                        'content': sim,
+                    })
+                except Exception:
                     pass
         
         return simulations
+
+    # ========== Cold Memory Normalization ==========
+
+    def list_cold_manifests(self, include_detached: bool = False) -> List[Dict[str, Any]]:
+        """List detachable cold-memory manifests."""
+        return self.cold_memory.list_manifests(include_detached=include_detached)
+
+    def export_cold_manifest(self, manifest_id: str) -> Dict[str, Any]:
+        """Export a detachable cold-memory manifest."""
+        return self.bridge.export_manifest(manifest_id)
+
+    def import_cold_manifest(self, manifest: Dict[str, Any]) -> Dict[str, Any]:
+        """Import and attach a previously detached cold-memory manifest."""
+        return self.bridge.import_manifest(manifest)
+
+    def tombstone_cold_item(self, item_id: str, reason: str = 'manual'):
+        """Tombstone an item without hard deletion for lineage/audit continuity."""
+        self.bridge.detach_item(item_id, reason=reason)
     
     # ========== Neural Archives Integration ==========
     
@@ -233,7 +461,18 @@ class AtlanteanQuadraBridge:
         Returns:
             Snapshot data with metadata
         """
-        snapshot = self.hot_memory.snapshot()
+        raw_snapshot = self.hot_memory.snapshot()
+        snapshot = {
+            'phi1': raw_snapshot['phi1'].tolist(),
+            'phi5': raw_snapshot['phi5'].tolist(),
+            'Phi': float(raw_snapshot['Phi'].item()),
+            'Theta': raw_snapshot['Theta'],
+            'device_id': raw_snapshot['device_id'],
+            'version': raw_snapshot['version'],
+            'timestamp': raw_snapshot['timestamp'],
+            'identity_fingerprint': raw_snapshot['identity_fingerprint'],
+            'schema_version': raw_snapshot['schema_version'],
+        }
         snapshot['label'] = label or f"Snapshot v{self.hot_memory.version}"
         snapshot['created_at'] = datetime.now().isoformat()
         
@@ -401,7 +640,9 @@ class AtlanteanQuadraBridge:
     @staticmethod
     def _default_embedder(text: str) -> np.ndarray:
         """Simple embedder for demo/testing."""
-        np.random.seed(hash(str(text)) % (2**32))
+        digest = hashlib.sha256(str(text).encode('utf-8')).digest()
+        seed = int.from_bytes(digest[:4], byteorder='big', signed=False)
+        np.random.seed(seed)
         return np.random.randn(128)
 
 

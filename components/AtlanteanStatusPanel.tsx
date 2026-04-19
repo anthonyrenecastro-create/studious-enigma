@@ -1,5 +1,10 @@
-import React from 'react';
-import { AtlanteanStatus, FieldData } from '../services/atlanteanService';
+import React, { useEffect, useState } from 'react';
+import {
+  AtlanteanStatus,
+  FieldData,
+  ReplayIntegrityProof,
+  replayIntegrityProof,
+} from '../services/atlanteanService';
 
 interface AtlanteanStatusPanelProps {
   status: AtlanteanStatus | null;
@@ -8,6 +13,36 @@ interface AtlanteanStatusPanelProps {
 }
 
 export default function AtlanteanStatusPanel({ status, fields, isLoading }: AtlanteanStatusPanelProps) {
+  const [proof, setProof] = useState<ReplayIntegrityProof | null>(null);
+  const [proofError, setProofError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadProof = async () => {
+      if (!status) return;
+      try {
+        const nextProof = await replayIntegrityProof();
+        if (!cancelled) {
+          setProof(nextProof);
+          setProofError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setProof(null);
+          setProofError(err instanceof Error ? err.message : 'Replay proof failed');
+        }
+      }
+    };
+
+    loadProof();
+    const interval = setInterval(loadProof, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [status?.version, status?.device_id]);
+
   if (isLoading && !status) {
     return (
       <div className="p-6 text-center">
@@ -38,6 +73,27 @@ export default function AtlanteanStatusPanel({ status, fields, isLoading }: Atla
           <h3 className="text-sm font-bold text-purple-300 uppercase tracking-wider">
             Atlantean Core Active
           </h3>
+          <span
+            className={`ml-auto px-2 py-0.5 rounded-full text-[9px] font-bold tracking-wider border ${
+              proofError
+                ? 'text-amber-300 border-amber-400/30 bg-amber-500/10'
+                : proof?.match
+                ? 'text-emerald-300 border-emerald-400/30 bg-emerald-500/10'
+                : 'text-red-300 border-red-400/30 bg-red-500/10'
+            }`}
+            title={
+              proofError
+                ? proofError
+                : proof && !proof.match
+                ? proof.issues
+                    .slice(0, 3)
+                    .map((issue) => issue.type || 'unknown_issue')
+                    .join(', ')
+                : 'Replay integrity verified'
+            }
+          >
+            {proofError ? 'REPLAY ERR' : proof?.match ? 'REPLAY OK' : 'REPLAY MISMATCH'}
+          </span>
         </div>
         <div className="text-xs text-gray-400">
           Intelligence v{status.version} • {status.device_id.slice(0, 12)}...

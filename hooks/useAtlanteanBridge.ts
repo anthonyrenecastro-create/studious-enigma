@@ -153,6 +153,18 @@ export function useAtlanteanBridge() {
   }, []);
 
   /**
+   * Verify deterministic replay integrity proof.
+   */
+  const replayIntegrityProof = useCallback(async () => {
+    try {
+      return await AtlanteanService.replayIntegrityProof();
+    } catch (err) {
+      console.error('Failed to compute replay integrity proof:', err);
+      throw err;
+    }
+  }, []);
+
+  /**
    * Reset intelligence state (for testing/demo)
    */
   const reset = useCallback(async () => {
@@ -178,6 +190,7 @@ export function useAtlanteanBridge() {
     storeSimulation,
     recallSimulations,
     createSnapshot,
+    replayIntegrityProof,
     reset,
     
     // Refresh

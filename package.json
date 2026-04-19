@@ -13,7 +13,6 @@
   },
   "keywords": [],
   "author": "",
-  "license": "AGPL-3.0",
   "dependencies": {
     "@google/genai": "^1.8.0",
     "chart.js": "^4.5.1",

@@ -4,6 +4,7 @@ import { listConversations, deleteConversation } from '../services/apiService';
 import { Conversation } from '../types';
 import Icon from './Icon';
 import { useAtlanteanBridge } from '../hooks/useAtlanteanBridge';
+import type { ReplayIntegrityProof } from '../services/atlanteanService';
 
 interface NeuralArchivesProps {
   currentConvoId: string;
@@ -24,6 +25,9 @@ const NeuralArchives: React.FC<NeuralArchivesProps> = ({ currentConvoId, onSelec
   const [simulations, setSimulations] = useState<StoredSimulation[]>([]);
   const [loadingSimulations, setLoadingSimulations] = useState(false);
   const [showSimulations, setShowSimulations] = useState(false);
+  const [replayProof, setReplayProof] = useState<ReplayIntegrityProof | null>(null);
+  const [loadingReplayProof, setLoadingReplayProof] = useState(false);
+  const [replayProofError, setReplayProofError] = useState<string | null>(null);
   const atlantean = useAtlanteanBridge();
 
   const loadArchives = async () => {
@@ -46,9 +50,30 @@ const NeuralArchives: React.FC<NeuralArchivesProps> = ({ currentConvoId, onSelec
     }
   };
 
+  const loadReplayProof = async () => {
+    setLoadingReplayProof(true);
+    setReplayProofError(null);
+    try {
+      const proof = await atlantean.replayIntegrityProof();
+      setReplayProof(proof);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Failed to verify replay proof';
+      setReplayProofError(msg);
+      setReplayProof(null);
+    } finally {
+      setLoadingReplayProof(false);
+    }
+  };
+
   useEffect(() => {
     loadArchives();
   }, [currentConvoId]);
+
+  // Load simulations on mount so the count is visible immediately
+  useEffect(() => {
+    loadSimulations();
+    loadReplayProof();
+  }, []);
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -78,7 +103,7 @@ const NeuralArchives: React.FC<NeuralArchivesProps> = ({ currentConvoId, onSelec
         <button
           onClick={() => {
             setShowSimulations(!showSimulations);
-            if (!showSimulations && simulations.length === 0) {
+            if (!showSimulations) {
               loadSimulations();
             }
           }}
@@ -138,6 +163,61 @@ const NeuralArchives: React.FC<NeuralArchivesProps> = ({ currentConvoId, onSelec
               {loadingSimulations ? 'Loading...' : 'Refresh Simulations'}
             </button>
           </div>
+        )}
+      </div>
+
+      {/* Replay Integrity Proof */}
+      <div className="border-b border-white/5 p-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Icon name="shield" className={`w-4 h-4 ${replayProof?.match ? 'text-emerald-400' : 'text-red-400'}`} />
+            <span className="text-[10px] font-mono uppercase tracking-widest text-gray-400">
+              Replay Proof
+            </span>
+          </div>
+          <button
+            onClick={loadReplayProof}
+            disabled={loadingReplayProof}
+            className="text-[8px] font-mono uppercase tracking-widest text-gray-500 hover:text-gray-300 disabled:opacity-50 transition-colors"
+          >
+            {loadingReplayProof ? 'Checking...' : 'Refresh'}
+          </button>
+        </div>
+
+        {loadingReplayProof ? (
+          <div className="text-[9px] font-mono text-gray-500">Verifying deterministic replay...</div>
+        ) : replayProofError ? (
+          <div className="text-[9px] font-mono text-red-400">{replayProofError}</div>
+        ) : replayProof ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className={`text-[9px] font-mono uppercase tracking-wider ${replayProof.match ? 'text-emerald-400' : 'text-red-400'}`}>
+                {replayProof.match ? 'State Hash Match' : 'State Hash Mismatch'}
+              </span>
+              <span className="text-[8px] font-mono text-gray-500">
+                {replayProof.events_verified}/{replayProof.events_total} events
+              </span>
+            </div>
+
+            <div className="text-[8px] font-mono text-gray-500 break-all">
+              <div>replay: {replayProof.replay_state_hash ? `${replayProof.replay_state_hash.slice(0, 12)}...` : 'none'}</div>
+              <div>live: {replayProof.live_state_hash.slice(0, 12)}...</div>
+            </div>
+
+            {!replayProof.match && replayProof.issues.length > 0 && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-2 space-y-1">
+                <div className="text-[8px] font-mono uppercase tracking-widest text-red-300">Mismatch Reasons</div>
+                {replayProof.issues.slice(0, 3).map((issue, idx) => (
+                  <div key={idx} className="text-[8px] font-mono text-red-200 break-all">
+                    {issue.type || 'unknown_issue'}
+                    {Array.isArray(issue.details) && issue.details.length > 0 ? `: ${issue.details.join(', ')}` : ''}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-[9px] font-mono text-gray-500">No proof data yet.</div>
         )}
       </div>
 

@@ -3,6 +3,7 @@ import torch
 import json
 import time
 import uuid
+import hashlib
 from dataclasses import dataclass, asdict
 from typing import Dict, Optional
 
@@ -33,9 +34,15 @@ class AtlanteanHotMemory:
         """
         fingerprint = identity.fingerprint() if identity else None
         device = device_id or str(uuid.uuid4())
+
+        # Deterministic initialization seed allows reproducible replay from genesis.
+        seed_source = f"{fingerprint or 'no_identity'}::{device}"
+        seed = int.from_bytes(hashlib.sha256(seed_source.encode('utf-8')).digest()[:8], byteorder='big')
+        generator = torch.Generator()
+        generator.manual_seed(seed)
         
         return AtlanteanHotMemory(
-            phi1=torch.randn(grid_size),
+            phi1=torch.randn(grid_size, generator=generator),
             phi5=torch.ones(grid_size) * 0.1,
             Phi=torch.zeros(1),
             Theta={},

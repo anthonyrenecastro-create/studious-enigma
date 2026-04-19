@@ -167,7 +167,8 @@ export function useAtlantean(): UseAtlanteanReturn {
     try {
       setError(null);
       const result = await atlantean.recallSimulations(searchQuery, limit);
-      return result.simulations;
+      // recallSimulations already returns the array directly
+      return Array.isArray(result) ? result : (result as any).simulations ?? [];
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to recall simulations';
       setError(errorMsg);

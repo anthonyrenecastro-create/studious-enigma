@@ -201,8 +201,19 @@ const ChatInterface: React.FC = () => {
 
   useEffect(() => {
     if (!isReady || isLoading) return;
-    const interval = setInterval(() => {
-        setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.05, 0)]);
+    let stepCount = 0;
+    const interval = setInterval(async () => {
+        const step = runSimulationStep(0.05, 0);
+        setSimulationHistory(prev => [...prev.slice(-99), step]);
+        
+        // Auto-store simulations to cold memory every 5 steps (~20 seconds)
+        if (++stepCount % 5 === 0) {
+            try {
+                await storeSimulationSnapshot(step, 'Continuous monitoring', 0.4);
+            } catch (err) {
+                console.error('Failed to auto-store baseline:', err);
+            }
+        }
     }, 4000);
     return () => clearInterval(interval);
   }, [isReady, isLoading]);
@@ -245,8 +256,18 @@ const ChatInterface: React.FC = () => {
         try {
             // Get API key from env
             const apiKey = import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem('gemini_api_key');
+          const recentHistory = messages.slice(-10).map(m => ({
+            role: m.role,
+            content: m.content,
+          }));
             
-            atlanteanResult = await atlanteanQuery(currentInput, 'gemini', apiKey);
+          atlanteanResult = await atlanteanQuery(
+            currentInput,
+            'gemini',
+            apiKey || undefined,
+            recentHistory,
+            convoId || undefined
+          );
         } catch (atlanteanErr) {
             console.warn('Atlantean unavailable, falling back to Gemini:', atlanteanErr);
         }
@@ -263,9 +284,15 @@ const ChatInterface: React.FC = () => {
             const simResult = runSimulationStep(0.1, quality);
             setSimulationHistory(prev => [...prev.slice(-99), simResult]);
             
-            // Store significant simulation results in cold memory
-            if (quality > 0.6 || currentInput.toLowerCase().includes('predict') || currentInput.toLowerCase().includes('forecast')) {
-                await storeSimulationSnapshot(simResult, `Query: ${currentInput.slice(0, 50)}`, quality);
+            // Auto-store all query-triggered simulations to cold memory
+            try {
+                await storeSimulationSnapshot(
+                    { ...simResult, query: currentInput, response_quality: quality },
+                    `Query: ${currentInput.slice(0, 50)}`,
+                    quality
+                );
+            } catch (err) {
+                console.error('Failed to auto-store simulation:', err);
             }
             
             setMessages(prev => {
@@ -305,7 +332,20 @@ const ChatInterface: React.FC = () => {
               isStreaming: false 
             };
 
-            setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.2, 0.8)]);
+            const simResult = runSimulationStep(0.2, 0.8);
+            setSimulationHistory(prev => [...prev.slice(-99), simResult]);
+            
+            // Auto-store visualization simulations
+            try {
+                await storeSimulationSnapshot(
+                    { ...simResult, type: 'visualization', query: currentInput },
+                    `Visualization: ${currentInput.slice(0, 50)}`,
+                    0.7
+                );
+            } catch (err) {
+                console.error('Failed to auto-store visualization simulation:', err);
+            }
+            
             setMessages(prev => {
               const updated = prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
               persistSession(updated, simulationHistory);
@@ -324,7 +364,21 @@ const ChatInterface: React.FC = () => {
                 if (chunk.text) {
                   fullText += chunk.text;
                   const streamStress = Math.min(latency * 3, 0.9);
-                  setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(streamStress, 0.9)]);
+                  const simResult = runSimulationStep(streamStress, 0.9);
+                  setSimulationHistory(prev => [...prev.slice(-99), simResult]);
+                  
+                  // Periodically store streaming simulations to avoid spam
+                  if (fullText.length % 300 === 0) {
+                      try {
+                          await storeSimulationSnapshot(
+                              { ...simResult, type: 'streaming', text_length: fullText.length },
+                              `Streaming: ${currentInput.slice(0, 40)}...`,
+                              0.6
+                          );
+                      } catch (err) {
+                          // Silent fail to avoid blocking stream
+                      }
+                  }
 
                   setMessages(prev => prev.map(m => {
                       if (m.id !== botId) return m;
