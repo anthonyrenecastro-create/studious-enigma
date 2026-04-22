@@ -191,8 +191,8 @@ const NeuralArchives: React.FC<NeuralArchivesProps> = ({ currentConvoId, onSelec
         ) : replayProof ? (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className={`text-[9px] font-mono uppercase tracking-wider ${replayProof.match ? 'text-emerald-400' : 'text-red-400'}`}>
-                {replayProof.match ? 'State Hash Match' : 'State Hash Mismatch'}
+              <span className={`text-[9px] font-mono uppercase tracking-wider ${replayProof.match ? 'text-emerald-400' : replayProof.events_total === 0 ? 'text-gray-400' : 'text-red-400'}`}>
+                {replayProof.match ? 'State Hash Match' : replayProof.events_total === 0 ? 'No History Yet' : 'State Hash Mismatch'}
               </span>
               <span className="text-[8px] font-mono text-gray-500">
                 {replayProof.events_verified}/{replayProof.events_total} events

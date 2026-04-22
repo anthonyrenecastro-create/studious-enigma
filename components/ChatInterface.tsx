@@ -28,6 +28,7 @@ const ChatInterface: React.FC = () => {
   const [isFileParsing, setIsFileParsing] = useState(false);
   const [simulationHistory, setSimulationHistory] = useState<any[]>([]);
   const [pendingFiles, setPendingFiles] = useState<FileData[]>([]);
+  const [showAttachedDocs, setShowAttachedDocs] = useState(false);
   const [isProfileModalOpen, setProfileModalOpen] = useState(false);
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>(ThinkingMode.STANDARD);
   const [audioState, setAudioState] = useState(getAudioState());
@@ -122,6 +123,26 @@ const ChatInterface: React.FC = () => {
 
   const removeFile = (index: number) => {
     setPendingFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const buildInputWithAttachments = (rawInput: string, files: FileData[]): string => {
+    const base = rawInput.trim() || 'Process input stream.';
+    if (files.length === 0) return base;
+
+    const attachmentSections = files.map((file) => {
+      const extracted = (file.extractedText || '').trim();
+      const extractedPreview = extracted ? extracted.slice(0, 12000) : '';
+      const header = `[ATTACHED DOCUMENT: ${file.name} | ${file.type || 'unknown'} | ${formatFileSize(file.size)}]`;
+      return extractedPreview ? `${header}\n${extractedPreview}` : header;
+    });
+
+    return `${base}\n\n${attachmentSections.join('\n\n')}`;
   };
 
   const handleLearningFeedback = useCallback(async (messageId: string, feedback: 'positive' | 'negative' | 'correction') => {
@@ -242,8 +263,10 @@ const ChatInterface: React.FC = () => {
 
     const currentInput = input;
     const currentFiles = [...pendingFiles];
+    const inputWithAttachments = buildInputWithAttachments(currentInput, currentFiles);
     setInput('');
     setPendingFiles([]);
+    setShowAttachedDocs(false);
     setIsLoading(true);
     if (isListening) stopListening();
 
@@ -262,7 +285,7 @@ const ChatInterface: React.FC = () => {
           }));
             
           atlanteanResult = await atlanteanQuery(
-            currentInput,
+            inputWithAttachments,
             'gemini',
             apiKey || undefined,
             recentHistory,
@@ -287,7 +310,7 @@ const ChatInterface: React.FC = () => {
             // Auto-store all query-triggered simulations to cold memory
             try {
                 await storeSimulationSnapshot(
-                    { ...simResult, query: currentInput, response_quality: quality },
+                { ...simResult, query: currentInput, response_quality: quality, attachments: currentFiles.map(f => f.name) },
                     `Query: ${currentInput.slice(0, 50)}`,
                     quality
                 );
@@ -518,6 +541,50 @@ const ChatInterface: React.FC = () => {
 
         <footer className="flex-shrink-0 p-6 border-t bg-black/80 backdrop-blur-2xl border-white/5 z-20 min-h-[120px]">
             <div className="max-w-5xl mx-auto w-full">
+                {pendingFiles.length > 0 && (
+                  <div className="mb-3 rounded-xl border border-white/10 bg-white/5 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <button
+                        onClick={() => setShowAttachedDocs(prev => !prev)}
+                        className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-gray-300 hover:text-white transition-colors"
+                      >
+                        <Icon name={showAttachedDocs ? 'chevron-up' : 'chevron-down'} className="w-4 h-4" />
+                        Attached Documents ({pendingFiles.length})
+                      </button>
+                      <button
+                        onClick={() => {
+                          setPendingFiles([]);
+                          setShowAttachedDocs(false);
+                        }}
+                        className="text-[10px] font-mono uppercase tracking-widest text-red-300 hover:text-red-200 transition-colors"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+
+                    {showAttachedDocs && (
+                      <div className="mt-3 space-y-2">
+                        {pendingFiles.map((file, index) => (
+                          <div key={`${file.name}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2">
+                            <div className="min-w-0">
+                              <div className="truncate text-xs text-white">{file.name}</div>
+                              <div className="text-[10px] font-mono uppercase tracking-wider text-gray-500">
+                                {file.type || 'unknown'} • {formatFileSize(file.size)}
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => removeFile(index)}
+                              className="p-1.5 rounded-md text-gray-500 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+                              title="Remove attachment"
+                            >
+                              <Icon name="trash" className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="flex items-end gap-4">
                 <div className="flex gap-2 mb-1">
                     <button 

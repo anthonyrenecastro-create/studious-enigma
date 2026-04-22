@@ -45,13 +45,59 @@ else:
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
 
-# Configure session
-app.config['SESSION_TYPE'] = 'redis'
-app.config['SESSION_REDIS'] = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379)
-Session(app)
-
-# Redis client for persistent hot memory storage
-redis_client = redis.Redis(host=os.getenv('REDIS_HOST', 'localhost'), port=6379)
+# Try to connect to Redis, fallback to in-memory storage if unavailable
+try:
+    redis_host = os.getenv('REDIS_HOST', 'localhost')
+    redis_client = redis.Redis(host=redis_host, port=6379, socket_connect_timeout=2)
+    redis_client.ping()  # Test connection
+    app.config['SESSION_TYPE'] = 'redis'
+    app.config['SESSION_REDIS'] = redis_client
+    Session(app)
+    print(f"✅ Redis connected on {redis_host}:6379")
+    REDIS_AVAILABLE = True
+except (redis.ConnectionError, redis.TimeoutError, Exception) as e:
+    print(f"⚠️  Redis unavailable ({type(e).__name__}) - using in-memory storage")
+    app.config['SESSION_TYPE'] = 'filesystem'
+    Session(app)
+    REDIS_AVAILABLE = False
+    
+    # In-memory fallback for Redis operations
+    class InMemoryRedis:
+        def __init__(self):
+            self.data = {}
+            self.lists = {}
+        
+        def get(self, key):
+            return self.data.get(key, None)
+        
+        def set(self, key, value):
+            self.data[key] = value
+        
+        def incr(self, key):
+            current = int(self.data.get(key, 0))
+            self.data[key] = str(current + 1)
+            return current + 1
+        
+        def rpush(self, key, value):
+            if key not in self.lists:
+                self.lists[key] = []
+            self.lists[key].append(value)
+        
+        def lrange(self, key, start, end):
+            if key not in self.lists:
+                return []
+            items = self.lists[key]
+            if end == -1:
+                return items[start:]
+            return items[start:end+1]
+        
+        def delete(self, key):
+            if key in self.data:
+                del self.data[key]
+            if key in self.lists:
+                del self.lists[key]
+    
+    redis_client = InMemoryRedis()
 
 # In-process bridge cache
 bridges = {}
@@ -443,6 +489,16 @@ def get_bridge() -> 'AtlanteanQuadraBridge':
     return get_bridge_for_session('default')
 
 
+def _resolve_session_id(explicit_session_id: str | None = None) -> str:
+    """Resolve a stable session id without assuming Flask-Session internals."""
+    if explicit_session_id:
+        return explicit_session_id
+    sid = getattr(session, 'sid', None)
+    if sid:
+        return str(sid)
+    return 'default'
+
+
 def _index_phase_snapshot(
     session_id: str,
     bridge: 'AtlanteanQuadraBridge',
@@ -613,6 +669,9 @@ Respond naturally and helpfully to the user's query. Your intelligence fields ar
                 mem_type = mem.get('type', 'memory')
                 source_session = mem.get('session_id', 'unknown')
                 content = str(mem.get('content_raw', ''))
+                # Strip legacy provenance/debug tails from older stored turns.
+                if '\n\n[Provenance]' in content:
+                    content = content.split('\n\n[Provenance]', 1)[0].strip()
                 if len(content) > 260:
                     content = content[:260] + '...'
                 memory_lines.append(f"[{mem_type} | session={source_session}] {content}")
@@ -729,18 +788,10 @@ Current field stats:
         json.dumps(provenance_payload, sort_keys=True).encode('utf-8')
     ).hexdigest()
 
-    # Make provenance explicit in natural-language response.
-    recalled_line = "none"
-    if recalled_items:
-        recalled_line = "; ".join([item['snippet'] for item in recalled_items[:2]])
-    response_text = (
-        f"{response_text}\n\n"
-        f"[Provenance]\n"
-        f"this is recalled: {recalled_line}\n"
-        f"this is inferred: generated reasoning based on current query + recalled context\n"
-        f"confidence: overall={overall_confidence}, retrieval={retrieval_confidence:.3f}, generation={generation_confidence:.3f}\n"
-        f"integrity: {provenance_hash[:16]}..."
-    )
+    # Keep provenance in structured API metadata only; do not leak internal
+    # retrieval/generation traces into the user-visible assistant text.
+    if not response_text:
+        response_text = "I processed your request, but no response text was generated."
 
     # Persist both sides of this interaction into cold memory.
     try:
@@ -858,10 +909,11 @@ def learning_event():
     
     b = get_bridge_for_session(session_id)
     hrm = get_hrm_for_session(session_id)
-    hrm_snapshot = hrm.snapshot()
     
     try:
         b.on_event(event, **event_data)
+        # Capture HRM snapshot AFTER event application, which modifies hot memory
+        hrm_snapshot = hrm.snapshot()
         hrm_coupling = _apply_hrm_field_coupling(b, hrm_snapshot)
         _save_bridge_to_redis(session_id, b)
         _append_signed_event(
@@ -890,18 +942,32 @@ def learning_event():
 @app.route('/api/atlantean/simulation/store', methods=['POST'])
 def store_simulation():
     """Store simulation in cold memory."""
-    data = request.json
+    data = request.json or {}
+    session_id = _resolve_session_id(data.get('session_id'))
     simulation = data.get('simulation')
     confidence = data.get('confidence', 0.5)
     
     if not simulation:
         return jsonify({'error': 'No simulation data'}), 400
     
-    b = get_bridge()
+    b = get_bridge_for_session(session_id)
+    hrm = get_hrm_for_session(session_id)
     b.store_simulation(simulation, confidence)
-    _save_bridge_to_redis('default', b)
+    # Capture HRM snapshot AFTER store operation, which modifies hot memory
+    hrm_snapshot = hrm.snapshot()
+    _save_bridge_to_redis(session_id, b)
+    _append_signed_event(
+        session_id=session_id,
+        bridge=b,
+        event_type='simulation_store',
+        payload={
+            'scenario': simulation.get('scenario', 'unknown') if isinstance(simulation, dict) else 'unknown',
+            'confidence': float(confidence),
+        },
+        hrm_snapshot=hrm_snapshot,
+    )
     
-    return jsonify({'success': True})
+    return jsonify({'success': True, 'session_id': session_id})
 
 
 @app.route('/api/atlantean/simulation/recall', methods=['POST'])
@@ -1055,7 +1121,7 @@ def verify_integrity():
 @app.route('/api/atlantean/integrity/replay', methods=['GET'])
 def replay_integrity_proof():
     """Deterministic one-shot replay proof: event-log state hash vs current live state hash."""
-    session_id = request.args.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(request.args.get('session_id'))
     b = get_bridge_for_session(session_id)
     return jsonify(_deterministic_replay_proof(session_id, b))
 

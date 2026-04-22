@@ -79,11 +79,15 @@ export default function AtlanteanStatusPanel({ status, fields, isLoading }: Atla
                 ? 'text-amber-300 border-amber-400/30 bg-amber-500/10'
                 : proof?.match
                 ? 'text-emerald-300 border-emerald-400/30 bg-emerald-500/10'
+                : proof && proof.events_total === 0
+                ? 'text-gray-400 border-gray-500/30 bg-gray-500/10'
                 : 'text-red-300 border-red-400/30 bg-red-500/10'
             }`}
             title={
               proofError
                 ? proofError
+                : proof && proof.events_total === 0
+                ? 'No events recorded yet — replay will activate after the first query'
                 : proof && !proof.match
                 ? proof.issues
                     .slice(0, 3)
@@ -92,7 +96,7 @@ export default function AtlanteanStatusPanel({ status, fields, isLoading }: Atla
                 : 'Replay integrity verified'
             }
           >
-            {proofError ? 'REPLAY ERR' : proof?.match ? 'REPLAY OK' : 'REPLAY MISMATCH'}
+            {proofError ? 'REPLAY ERR' : proof?.match ? 'REPLAY OK' : proof && proof.events_total === 0 ? 'NO HISTORY' : 'REPLAY MISMATCH'}
           </span>
         </div>
         <div className="text-xs text-gray-400">

@@ -14,9 +14,9 @@ app.use(cors()); // Allow requests from the frontend
 app.use(express.json({ limit: '10mb' })); // Allow larger payloads for file uploads
 
 // --- API Key and Service Initialization ---
-const geminiApiKey = process.env.API_KEY;
+const geminiApiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
 if (!geminiApiKey) {
-    throw new Error("API_KEY environment variable not set for Gemini.");
+    throw new Error("API_KEY (or GEMINI_API_KEY) environment variable not set for Gemini.");
 }
 const ai = new GoogleGenAI({ apiKey: geminiApiKey });
 

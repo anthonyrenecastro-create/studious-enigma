@@ -143,6 +143,19 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, userAvatar, onSpeak,
                         </button>
                     )}
                 </div>
+
+                {Array.isArray(message.attachments) && message.attachments.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-white/10 bg-black/30 p-2">
+                    <div className="text-[9px] font-mono uppercase tracking-widest text-gray-500 mb-1">Attached Documents</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {message.attachments.map((name, index) => (
+                        <span key={`${name}-${index}`} className="text-[10px] px-2 py-1 rounded-md bg-white/5 border border-white/10 text-gray-300">
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 
                 {message.mermaidData && (
                   <div className="mt-4">
