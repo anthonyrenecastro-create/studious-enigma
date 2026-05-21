@@ -6,6 +6,35 @@
  */
 
 const ATLANTEAN_API_BASE = import.meta.env.VITE_ATLANTEAN_API_BASE || '/api/atlantean';
+const ATLANTEAN_SESSION_STORAGE_KEY = 'atlantean.session_id';
+
+function generateSessionId(): string {
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `atl-${Date.now()}-${rand}`;
+}
+
+export function getStableSessionId(): string {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return 'default';
+  }
+
+  try {
+    const existing = window.localStorage.getItem(ATLANTEAN_SESSION_STORAGE_KEY);
+    if (existing && existing.trim()) {
+      return existing;
+    }
+
+    const created = generateSessionId();
+    window.localStorage.setItem(ATLANTEAN_SESSION_STORAGE_KEY, created);
+    return created;
+  } catch {
+    return 'default';
+  }
+}
+
+function resolveSessionId(sessionId?: string): string {
+  return sessionId || getStableSessionId();
+}
 
 export interface AtlanteanStatus {
   device_id: string;
@@ -81,8 +110,9 @@ export type LearningEventType =
 /**
  * Get current intelligence status
  */
-export async function getStatus(): Promise<AtlanteanStatus> {
-  const response = await fetch(`${ATLANTEAN_API_BASE}/status`);
+export async function getStatus(sessionId?: string): Promise<AtlanteanStatus> {
+  const sid = resolveSessionId(sessionId);
+  const response = await fetch(`${ATLANTEAN_API_BASE}/status?session_id=${encodeURIComponent(sid)}`);
   if (!response.ok) {
     throw new Error(`Failed to get status: ${response.statusText}`);
   }
@@ -104,9 +134,11 @@ export async function query(
   history: Array<{ role: string; content: string }> = [],
   sessionId?: string
 ): Promise<QueryResponse> {
+  const sid = resolveSessionId(sessionId);
   const body: any = { 
     input, 
-    llm_provider: llmProvider 
+    llm_provider: llmProvider,
+    session_id: sid,
   };
   
   if (apiKey) {
@@ -117,10 +149,6 @@ export async function query(
     body.history = history;
   }
 
-  if (sessionId) {
-    body.session_id = sessionId;
-  }
-  
   const response = await fetch(`${ATLANTEAN_API_BASE}/query`, {
     method: 'POST',
     headers: {
@@ -139,8 +167,9 @@ export async function query(
 /**
  * Get field visualization data
  */
-export async function getFields(): Promise<FieldData> {
-  const response = await fetch(`${ATLANTEAN_API_BASE}/fields`);
+export async function getFields(sessionId?: string): Promise<FieldData> {
+  const sid = resolveSessionId(sessionId);
+  const response = await fetch(`${ATLANTEAN_API_BASE}/fields?session_id=${encodeURIComponent(sid)}`);
   if (!response.ok) {
     throw new Error(`Failed to get fields: ${response.statusText}`);
   }
@@ -158,14 +187,16 @@ export async function getFields(): Promise<FieldData> {
  */
 export async function triggerLearningEvent(
   event: LearningEventType,
-  data: Record<string, any> = {}
+  data: Record<string, any> = {},
+  sessionId?: string
 ): Promise<{ success: boolean; status: AtlanteanStatus }> {
+  const sid = resolveSessionId(sessionId);
   const response = await fetch(`${ATLANTEAN_API_BASE}/learning-event`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ event, data }),
+    body: JSON.stringify({ event, data, session_id: sid }),
   });
   
   if (!response.ok) {
@@ -180,14 +211,16 @@ export async function triggerLearningEvent(
  */
 export async function storeSimulation(
   simulation: any,
-  confidence: number = 0.5
+  confidence: number = 0.5,
+  sessionId?: string
 ): Promise<{ success: boolean }> {
+  const sid = resolveSessionId(sessionId);
   const response = await fetch(`${ATLANTEAN_API_BASE}/simulation/store`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ simulation, confidence }),
+    body: JSON.stringify({ simulation, confidence, session_id: sid }),
   });
   
   if (!response.ok) {
@@ -202,10 +235,14 @@ export async function storeSimulation(
  */
 export async function recallSimulations(
   searchQuery: string,
-  limit: number = 50
+  limit: number = 50,
+  sessionId?: string
 ): Promise<any[]> {
+  const sid = resolveSessionId(sessionId);
   // Prefer /list (direct Redis listing). Fallback to /recall for backward compatibility.
-  const listResponse = await fetch(`${ATLANTEAN_API_BASE}/simulation/list?limit=${limit}`);
+  const listResponse = await fetch(
+    `${ATLANTEAN_API_BASE}/simulation/list?limit=${limit}&session_id=${encodeURIComponent(sid)}`
+  );
   if (listResponse.ok) {
     const data = await listResponse.json();
     return data.simulations || [];
@@ -220,7 +257,7 @@ export async function recallSimulations(
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ query: searchQuery, limit }),
+    body: JSON.stringify({ query: searchQuery, limit, session_id: sid }),
   });
 
   if (!recallResponse.ok) {
@@ -235,14 +272,16 @@ export async function recallSimulations(
  * Create a labeled snapshot for Neural Archives
  */
 export async function createSnapshot(
-  label?: string
+  label?: string,
+  sessionId?: string
 ): Promise<{ snapshot: any }> {
+  const sid = resolveSessionId(sessionId);
   const response = await fetch(`${ATLANTEAN_API_BASE}/snapshot`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ label }),
+    body: JSON.stringify({ label, session_id: sid }),
   });
   
   if (!response.ok) {
@@ -259,9 +298,10 @@ export async function listColdManifests(
   includeDetached: boolean = false,
   sessionId?: string
 ): Promise<{ session_id: string; manifests: ColdManifest[] }> {
+  const sid = resolveSessionId(sessionId);
   const params = new URLSearchParams();
   if (includeDetached) params.set('include_detached', 'true');
-  if (sessionId) params.set('session_id', sessionId);
+  params.set('session_id', sid);
   const suffix = params.toString() ? `?${params.toString()}` : '';
 
   const response = await fetch(`${ATLANTEAN_API_BASE}/cold/manifests${suffix}`);
@@ -278,8 +318,9 @@ export async function exportColdManifest(
   manifestId: string,
   sessionId?: string
 ): Promise<{ session_id: string; manifest: any }> {
+  const sid = resolveSessionId(sessionId);
   const params = new URLSearchParams({ manifest_id: manifestId });
-  if (sessionId) params.set('session_id', sessionId);
+  params.set('session_id', sid);
 
   const response = await fetch(`${ATLANTEAN_API_BASE}/cold/manifest/export?${params.toString()}`);
   if (!response.ok) {
@@ -295,8 +336,9 @@ export async function importColdManifest(
   manifest: any,
   sessionId?: string
 ): Promise<{ session_id: string; result: any }> {
+  const sid = resolveSessionId(sessionId);
   const body: any = { manifest };
-  if (sessionId) body.session_id = sessionId;
+  body.session_id = sid;
 
   const response = await fetch(`${ATLANTEAN_API_BASE}/cold/manifest/import`, {
     method: 'POST',
@@ -319,11 +361,12 @@ export async function tombstoneColdItem(
   reason: string = 'manual',
   sessionId?: string
 ): Promise<{ success: boolean; session_id: string; item_id: string; reason: string }> {
+  const sid = resolveSessionId(sessionId);
   const body: any = {
     item_id: itemId,
     reason,
+    session_id: sid,
   };
-  if (sessionId) body.session_id = sessionId;
 
   const response = await fetch(`${ATLANTEAN_API_BASE}/cold/tombstone`, {
     method: 'POST',
@@ -418,8 +461,9 @@ export async function checkHealth(): Promise<boolean> {
 export async function replayIntegrityProof(
   sessionId?: string
 ): Promise<ReplayIntegrityProof> {
+  const sid = resolveSessionId(sessionId);
   const params = new URLSearchParams();
-  if (sessionId) params.set('session_id', sessionId);
+  params.set('session_id', sid);
   const suffix = params.toString() ? `?${params.toString()}` : '';
 
   const response = await fetch(`${ATLANTEAN_API_BASE}/integrity/replay${suffix}`);

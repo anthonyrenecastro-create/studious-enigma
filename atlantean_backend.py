@@ -18,6 +18,7 @@ import uuid
 import time
 import hashlib
 import json
+from importlib import import_module
 import redis
 import numpy as np
 import torch
@@ -403,7 +404,10 @@ def _load_bridge_from_redis(session_id: str, bridge: 'AtlanteanQuadraBridge') ->
         if data is None:
             return False
         buf = io.BytesIO(data)
-        from hot_memory import AtlanteanHotMemory
+        try:
+            AtlanteanHotMemory = import_module('atlantean_core.hot_memory').AtlanteanHotMemory
+        except Exception:
+            AtlanteanHotMemory = import_module('hot_memory').AtlanteanHotMemory
         verify = bridge.identity if bridge.identity else None
         bridge.hot_memory = AtlanteanHotMemory.load(buf, verify_identity=verify)
         bridge.bridge.hot = bridge.hot_memory
@@ -973,23 +977,25 @@ def store_simulation():
 @app.route('/api/atlantean/simulation/recall', methods=['POST'])
 def recall_simulations():
     """Recall past simulations."""
-    data = request.json
+    data = request.json or {}
+    session_id = _resolve_session_id(data.get('session_id'))
     query = data.get('query', '')
     limit = data.get('limit', 10)
-    
-    b = get_bridge()
+
+    b = get_bridge_for_session(session_id)
     simulations = b.recall_simulations(query, limit)
-    
-    return jsonify({'simulations': simulations})
+
+    return jsonify({'session_id': session_id, 'simulations': simulations})
 
 
 @app.route('/api/atlantean/simulation/list', methods=['GET'])
 def list_simulations():
     """List all stored simulations directly from Redis (no embedding needed)."""
+    session_id = _resolve_session_id(request.args.get('session_id'))
     limit = int(request.args.get('limit', 50))
-    b = get_bridge()
+    b = get_bridge_for_session(session_id)
     simulations = b.list_all_simulations(limit)
-    return jsonify({'simulations': simulations})
+    return jsonify({'session_id': session_id, 'simulations': simulations})
 
 
 @app.route('/api/atlantean/cold/manifests', methods=['GET'])

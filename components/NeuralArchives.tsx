@@ -170,7 +170,18 @@ const NeuralArchives: React.FC<NeuralArchivesProps> = ({ currentConvoId, onSelec
       <div className="border-b border-white/5 p-4">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <Icon name="shield" className={`w-4 h-4 ${replayProof?.match ? 'text-emerald-400' : 'text-red-400'}`} />
+            <Icon
+              name="shield"
+              className={`w-4 h-4 ${
+                replayProofError
+                  ? 'text-red-400'
+                  : replayProof?.events_total === 0
+                  ? 'text-gray-400'
+                  : replayProof?.match
+                  ? 'text-emerald-400'
+                  : 'text-red-400'
+              }`}
+            />
             <span className="text-[10px] font-mono uppercase tracking-widest text-gray-400">
               Replay Proof
             </span>

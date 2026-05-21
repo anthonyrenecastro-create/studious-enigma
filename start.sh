@@ -1,17 +1,97 @@
 #!/bin/bash
 
 # Start Everything Script for Studious Enigma
-# This script starts Redis (via Docker), Python backend, Node backend, and Frontend
+# Starts Redis (if needed), Python backend, Node backend, then frontend.
 
-echo "🚀 Starting Studious Enigma - UI + Node API + Python Core"
+set -euo pipefail
 
-# Check if Redis container is running
-if ! docker ps | grep -q redis; then
-    echo "📦 Starting Redis container..."
-    docker run -d --name redis-atlantean -p 6379:6379 redis:7-alpine
-    sleep 3
+PY_BACKEND_PORT="${PY_BACKEND_PORT:-5001}"
+PY_BACKEND_URL="http://127.0.0.1:${PY_BACKEND_PORT}"
+HEALTH_URL="${PY_BACKEND_URL}/health"
+START_NODE_API="${START_NODE_API:-1}"
+
+PY_BACKEND_PID=""
+NODE_API_PID=""
+
+cleanup() {
+    echo ""
+    echo "🛑 Shutting down services..."
+    if [[ -n "${NODE_API_PID}" ]] && kill -0 "${NODE_API_PID}" 2>/dev/null; then
+        kill "${NODE_API_PID}" 2>/dev/null || true
+        wait "${NODE_API_PID}" 2>/dev/null || true
+        echo "✅ Node API stopped"
+    fi
+    if [[ -n "${PY_BACKEND_PID}" ]] && kill -0 "${PY_BACKEND_PID}" 2>/dev/null; then
+        kill "${PY_BACKEND_PID}" 2>/dev/null || true
+        wait "${PY_BACKEND_PID}" 2>/dev/null || true
+        echo "✅ Python backend stopped"
+    fi
+}
+
+trap cleanup EXIT INT TERM
+
+echo "🚀 Starting Studious Enigma - Python Core + Node API + Frontend"
+
+# Check if Redis container is running (best effort)
+if command -v docker >/dev/null 2>&1; then
+    if ! docker ps --format '{{.Names}}' | grep -qx 'redis-atlantean'; then
+        if docker ps -a --format '{{.Names}}' | grep -qx 'redis-atlantean'; then
+            echo "📦 Starting existing Redis container redis-atlantean..."
+            docker start redis-atlantean >/dev/null
+        else
+            echo "📦 Creating Redis container redis-atlantean..."
+            docker run -d --name redis-atlantean -p 6379:6379 redis:7-alpine >/dev/null
+        fi
+    else
+        echo "✅ Redis container already running"
+    fi
+else
+    echo "⚠️  Docker not found; skipping Redis auto-start"
 fi
 
-# Start all services with concurrently
-echo "🔄 Starting all services..."
-npm run start:all
+echo ""
+echo "🐍 Starting Atlantean backend on port ${PY_BACKEND_PORT}..."
+python3 atlantean_backend.py &
+PY_BACKEND_PID=$!
+
+echo "⏳ Waiting for backend health at ${HEALTH_URL} ..."
+for i in $(seq 1 60); do
+    if curl -fsS "${HEALTH_URL}" >/dev/null 2>&1; then
+        echo "✅ Atlantean backend is healthy (PID: ${PY_BACKEND_PID})"
+        break
+    fi
+    if ! kill -0 "${PY_BACKEND_PID}" 2>/dev/null; then
+        echo "❌ Atlantean backend exited before becoming healthy"
+        exit 1
+    fi
+    sleep 1
+    if [[ "${i}" == "60" ]]; then
+        echo "❌ Atlantean backend health check timed out"
+        exit 1
+    fi
+done
+
+if [[ "${START_NODE_API}" == "1" ]]; then
+    echo ""
+    echo "🟦 Starting Node API backend on port 3001..."
+    npm start &
+    NODE_API_PID=$!
+    echo "✅ Node API launched (PID: ${NODE_API_PID})"
+else
+    echo "ℹ️  Skipping Node API startup (START_NODE_API=${START_NODE_API})"
+fi
+
+echo ""
+echo "🌐 Starting frontend (Vite)..."
+echo ""
+echo "=================================================="
+echo "  READY"
+echo "=================================================="
+echo "  Atlantean Backend: ${PY_BACKEND_URL}"
+echo "  Node API:          http://127.0.0.1:3001"
+echo "  Frontend UI:       http://127.0.0.1:3000"
+echo "=================================================="
+echo ""
+
+# Keep frontend in foreground; trap handles backend cleanup on exit.
+npm run dev
