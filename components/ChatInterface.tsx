@@ -3,16 +3,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Message, Role, UserProfile, FileData, ThinkingMode, ChartConfig, Conversation } from '../types';
 import { streamChatResponse } from '../services/geminiService';
 import { loadConversation, saveConversation } from '../services/apiService';
-import { resetSimulation, runSimulationStep, storeSimulationSnapshot } from '../services/simulationService';
-import { query as atlanteanQuery, triggerLearningEvent } from '../services/atlanteanService';
-import { useAtlanteanBridge } from '../hooks/useAtlanteanBridge';
+import { resetSimulation, runSimulationStep } from '../services/simulationService';
 import { parseFile } from '../utils/fileParser';
 import ChatMessage from './ChatMessage';
 import TypingIndicator from './TypingIndicator';
 import Icon from './Icon';
 import SimulationVisualizer from './SimulationVisualizer';
 import NeuralArchives from './NeuralArchives';
-import AtlanteanStatusPanel from './AtlanteanStatusPanel';
 import ProfileModal from './ProfileModal';
 import VoiceModeOverlay from './VoiceModeOverlay';
 import { useSpeechToText } from '../hooks/useSpeechToText';
@@ -28,14 +25,10 @@ const ChatInterface: React.FC = () => {
   const [isFileParsing, setIsFileParsing] = useState(false);
   const [simulationHistory, setSimulationHistory] = useState<any[]>([]);
   const [pendingFiles, setPendingFiles] = useState<FileData[]>([]);
-  const [showAttachedDocs, setShowAttachedDocs] = useState(false);
   const [isProfileModalOpen, setProfileModalOpen] = useState(false);
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>(ThinkingMode.STANDARD);
   const [audioState, setAudioState] = useState(getAudioState());
   const [sidebarTab, setSidebarTab] = useState<'telemetry' | 'archives'>('telemetry');
-  
-  // Atlantean Bridge - replaces traditional state management
-  const atlantean = useAtlanteanBridge();
   
   const [convoId, setConvoId] = useState<string>('');
   const [convoCreatedAt, setConvoCreatedAt] = useState<number>(Date.now());
@@ -61,7 +54,6 @@ const ChatInterface: React.FC = () => {
   const { start: baseStartLive, stop: stopLive, isActive: isLiveActive, isModelSpeaking, volume } = useLiveSession();
 
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const voiceSessionStart = useRef<number>(0);
 
   const syncAudio = async () => {
       const state = await wakeAudioContext();
@@ -70,25 +62,8 @@ const ChatInterface: React.FC = () => {
 
   const startLive = async () => {
     await syncAudio();
-    voiceSessionStart.current = Date.now();
     baseStartLive();
   };
-
-  const handleStopLive = useCallback(async () => {
-    stopLive();
-    
-    // Calculate engagement based on session duration
-    if (voiceSessionStart.current > 0) {
-      const duration = (Date.now() - voiceSessionStart.current) / 1000; // seconds
-      const engagement = Math.min(duration / 60, 1.0); // Normalize to 0-1 (max 1 minute = 100%)
-      
-      // Apply voice engagement learning signal
-      await atlantean.triggerLearning('voice_session_end', { engagement });
-      voiceSessionStart.current = 0;
-      
-      console.log(`🎙️ Voice session ended. Engagement: ${(engagement * 100).toFixed(0)}%`);
-    }
-  }, [stopLive, atlantean]);
 
   const startListening = async () => {
     await syncAudio();
@@ -124,40 +99,6 @@ const ChatInterface: React.FC = () => {
   const removeFile = (index: number) => {
     setPendingFiles(prev => prev.filter((_, i) => i !== index));
   };
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
-  const buildInputWithAttachments = (rawInput: string, files: FileData[]): string => {
-    const base = rawInput.trim() || 'Process input stream.';
-    if (files.length === 0) return base;
-
-    const attachmentSections = files.map((file) => {
-      const extracted = (file.extractedText || '').trim();
-      const extractedPreview = extracted ? extracted.slice(0, 12000) : '';
-      const header = `[ATTACHED DOCUMENT: ${file.name} | ${file.type || 'unknown'} | ${formatFileSize(file.size)}]`;
-      return extractedPreview ? `${header}\n${extractedPreview}` : header;
-    });
-
-    return `${base}\n\n${attachmentSections.join('\n\n')}`;
-  };
-
-  const handleLearningFeedback = useCallback(async (messageId: string, feedback: 'positive' | 'negative' | 'correction') => {
-    // Map feedback to learning events
-    const eventMap = {
-      'positive': 'user_positive_feedback',
-      'negative': 'user_negative_feedback',
-      'correction': 'user_correction'
-    } as const;
-    
-    await atlantean.triggerLearning(eventMap[feedback]);
-    
-    // Visual feedback
-    console.log(`🧠 Learning signal applied: ${feedback}`);
-  }, [atlantean]);
 
   const persistSession = useCallback(async (currentMessages: Message[], currentSim: any[]) => {
     if (!convoId) return;
@@ -222,19 +163,8 @@ const ChatInterface: React.FC = () => {
 
   useEffect(() => {
     if (!isReady || isLoading) return;
-    let stepCount = 0;
-    const interval = setInterval(async () => {
-        const step = runSimulationStep(0.05, 0);
-        setSimulationHistory(prev => [...prev.slice(-99), step]);
-        
-        // Auto-store simulations to cold memory every 5 steps (~20 seconds)
-        if (++stepCount % 5 === 0) {
-            try {
-                await storeSimulationSnapshot(step, 'Continuous monitoring', 0.4);
-            } catch (err) {
-                console.error('Failed to auto-store baseline:', err);
-            }
-        }
+    const interval = setInterval(() => {
+        setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.05, 0)]);
     }, 4000);
     return () => clearInterval(interval);
   }, [isReady, isLoading]);
@@ -263,10 +193,8 @@ const ChatInterface: React.FC = () => {
 
     const currentInput = input;
     const currentFiles = [...pendingFiles];
-    const inputWithAttachments = buildInputWithAttachments(currentInput, currentFiles);
     setInput('');
     setPendingFiles([]);
-    setShowAttachedDocs(false);
     setIsLoading(true);
     if (isListening) stopListening();
 
@@ -274,67 +202,7 @@ const ChatInterface: React.FC = () => {
     setMessages(prev => [...prev, { id: botId, role: Role.BOT, content: '', isStreaming: true }]);
 
     try {
-        // Try Atlantean backend first (with real Gemini LLM)
-        let atlanteanResult;
-        try {
-            // Get API key from env
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY || localStorage.getItem('gemini_api_key');
-          const recentHistory = messages.slice(-10).map(m => ({
-            role: m.role,
-            content: m.content,
-          }));
-            
-          atlanteanResult = await atlanteanQuery(
-            inputWithAttachments,
-            'gemini',
-            apiKey || undefined,
-            recentHistory,
-            convoId || undefined
-          );
-        } catch (atlanteanErr) {
-            console.warn('Atlantean unavailable, falling back to Gemini:', atlanteanErr);
-        }
-
-        // If Atlantean worked, use it
-        if (atlanteanResult) {
-            const finalBotMsg = { 
-                content: atlanteanResult.response || "🧠 Atlantean Intelligence is processing...",
-                isStreaming: false 
-            };
-            
-            // Apply simulation based on response quality (using learning capacity as metric)
-            const quality = atlantean.status?.learning_capacity || 0.5;
-            const simResult = runSimulationStep(0.1, quality);
-            setSimulationHistory(prev => [...prev.slice(-99), simResult]);
-            
-            // Auto-store all query-triggered simulations to cold memory
-            try {
-                await storeSimulationSnapshot(
-                { ...simResult, query: currentInput, response_quality: quality, attachments: currentFiles.map(f => f.name) },
-                    `Query: ${currentInput.slice(0, 50)}`,
-                    quality
-                );
-            } catch (err) {
-                console.error('Failed to auto-store simulation:', err);
-            }
-            
-            setMessages(prev => {
-                const updated = prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
-                persistSession(updated, simulationHistory);
-                return updated;
-            });
-            
-            // Apply learning signal for successful interaction
-            await triggerLearningEvent('user_confirmation').catch(() => {});
-            
-            setIsLoading(false);
-            return;
-        }
-
-        // Otherwise try Gemini directly (requires API key)
-        // Filter conversation history to exclude the current user message and limit to recent context
-        const conversationHistory = messages.slice(-10); // Last 10 messages for context
-        const result = await streamChatResponse(nextMessages, currentInput, currentFiles, thinkingMode, userProfile, conversationHistory);
+        const result = await streamChatResponse(nextMessages, currentInput, currentFiles, thinkingMode);
         
         if (result && result.candidates) {
             const candidate = result.candidates[0];
@@ -355,20 +223,7 @@ const ChatInterface: React.FC = () => {
               isStreaming: false 
             };
 
-            const simResult = runSimulationStep(0.2, 0.8);
-            setSimulationHistory(prev => [...prev.slice(-99), simResult]);
-            
-            // Auto-store visualization simulations
-            try {
-                await storeSimulationSnapshot(
-                    { ...simResult, type: 'visualization', query: currentInput },
-                    `Visualization: ${currentInput.slice(0, 50)}`,
-                    0.7
-                );
-            } catch (err) {
-                console.error('Failed to auto-store visualization simulation:', err);
-            }
-            
+            setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.2, 0.8)]);
             setMessages(prev => {
               const updated = prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
               persistSession(updated, simulationHistory);
@@ -387,21 +242,7 @@ const ChatInterface: React.FC = () => {
                 if (chunk.text) {
                   fullText += chunk.text;
                   const streamStress = Math.min(latency * 3, 0.9);
-                  const simResult = runSimulationStep(streamStress, 0.9);
-                  setSimulationHistory(prev => [...prev.slice(-99), simResult]);
-                  
-                  // Periodically store streaming simulations to avoid spam
-                  if (fullText.length % 300 === 0) {
-                      try {
-                          await storeSimulationSnapshot(
-                              { ...simResult, type: 'streaming', text_length: fullText.length },
-                              `Streaming: ${currentInput.slice(0, 40)}...`,
-                              0.6
-                          );
-                      } catch (err) {
-                          // Silent fail to avoid blocking stream
-                      }
-                  }
+                  setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(streamStress, 0.9)]);
 
                   setMessages(prev => prev.map(m => {
                       if (m.id !== botId) return m;
@@ -449,7 +290,7 @@ const ChatInterface: React.FC = () => {
 
   return (
     <div className="relative flex h-full w-full bg-black/40 overflow-hidden transform-gpu" style={{ contain: 'strict' }}>
-      <VoiceModeOverlay isActive={isLiveActive} isModelSpeaking={isModelSpeaking} volume={volume} onClose={handleStopLive} />
+      <VoiceModeOverlay isActive={isLiveActive} isModelSpeaking={isModelSpeaking} volume={volume} onClose={stopLive} />
 
       <aside className="w-[380px] h-full flex-shrink-0 border-r hidden xl:flex flex-col bg-black/40 backdrop-blur-xl z-10" style={{ borderColor: 'var(--color-border)', contain: 'layout' }}>
         <div className="flex border-b border-white/5 bg-black/20 p-1">
@@ -486,7 +327,7 @@ const ChatInterface: React.FC = () => {
                         <div className="flex items-center gap-2 mt-1 cursor-pointer group" onClick={syncAudio}>
                             <span className={`w-1.5 h-1.5 rounded-full ${audioState === 'running' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500 animate-pulse'}`}></span>
                             <span className="text-[9px] font-mono uppercase tracking-widest text-gray-500 group-hover:text-gray-300 transition-colors">
-                                {audioState === 'running' ? 'Intelligence Linked' : 'Link Audio'}
+                                {audioState === 'running' ? 'Intelligence Synced' : 'Sync Link'}
                             </span>
                         </div>
                     </div>
@@ -517,22 +358,15 @@ const ChatInterface: React.FC = () => {
             {messages.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 opacity-30 text-center px-8">
                 <Icon name="sparkles" className="w-20 h-20 mb-8 text-[var(--color-primary)]" />
-                <h2 className="text-2xl font-black uppercase tracking-[0.4em] text-white">Ready to Chat</h2>
+                <h2 className="text-2xl font-black uppercase tracking-[0.4em] text-white">Intelligence Ready</h2>
                 <p className="mt-4 text-[10px] uppercase max-w-sm tracking-widest leading-loose text-gray-400 font-mono">
-                    I'm here to help with anything you need. Ask me questions, share your thoughts, or let's explore ideas together!
+                    System stabilized in {thinkingMode} mode. Awaiting predictive parameters or visualization requests.
                 </p>
                 </div>
             )}
 
             {messages.map((msg) => (
-                <ChatMessage 
-                  key={msg.id} 
-                  message={msg} 
-                  userAvatar={userProfile.avatar} 
-                  onSpeak={speak} 
-                  isCurrentSpeaking={isSpeaking}
-                  onLearningFeedback={handleLearningFeedback}
-                />
+                <ChatMessage key={msg.id} message={msg} userAvatar={userProfile.avatar} onSpeak={speak} isCurrentSpeaking={isSpeaking} />
             ))}
             {isLoading && <div className="flex justify-center py-4"><TypingIndicator /></div>}
             <div ref={chatEndRef} className="h-4 w-full flex-shrink-0" />
@@ -541,50 +375,6 @@ const ChatInterface: React.FC = () => {
 
         <footer className="flex-shrink-0 p-6 border-t bg-black/80 backdrop-blur-2xl border-white/5 z-20 min-h-[120px]">
             <div className="max-w-5xl mx-auto w-full">
-                {pendingFiles.length > 0 && (
-                  <div className="mb-3 rounded-xl border border-white/10 bg-white/5 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <button
-                        onClick={() => setShowAttachedDocs(prev => !prev)}
-                        className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-gray-300 hover:text-white transition-colors"
-                      >
-                        <Icon name={showAttachedDocs ? 'chevron-up' : 'chevron-down'} className="w-4 h-4" />
-                        Attached Documents ({pendingFiles.length})
-                      </button>
-                      <button
-                        onClick={() => {
-                          setPendingFiles([]);
-                          setShowAttachedDocs(false);
-                        }}
-                        className="text-[10px] font-mono uppercase tracking-widest text-red-300 hover:text-red-200 transition-colors"
-                      >
-                        Clear All
-                      </button>
-                    </div>
-
-                    {showAttachedDocs && (
-                      <div className="mt-3 space-y-2">
-                        {pendingFiles.map((file, index) => (
-                          <div key={`${file.name}-${index}`} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2">
-                            <div className="min-w-0">
-                              <div className="truncate text-xs text-white">{file.name}</div>
-                              <div className="text-[10px] font-mono uppercase tracking-wider text-gray-500">
-                                {file.type || 'unknown'} • {formatFileSize(file.size)}
-                              </div>
-                            </div>
-                            <button
-                              onClick={() => removeFile(index)}
-                              className="p-1.5 rounded-md text-gray-500 hover:text-red-300 hover:bg-red-500/10 transition-colors"
-                              title="Remove attachment"
-                            >
-                              <Icon name="trash" className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
                 <div className="flex items-end gap-4">
                 <div className="flex gap-2 mb-1">
                     <button 
@@ -608,7 +398,7 @@ const ChatInterface: React.FC = () => {
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-                    placeholder="What's on your mind? Ask me anything..."
+                    placeholder="Enter intelligence parameters..."
                     className="w-full p-4 pr-32 bg-white/5 border border-white/10 rounded-2xl resize-none focus:outline-none focus:border-[var(--color-primary)]/50 text-sm h-14 scrollbar-hide text-white font-mono placeholder-gray-700 transition-all"
                     />
                     <div className="absolute right-2 bottom-2 flex items-center gap-1.5 p-1">

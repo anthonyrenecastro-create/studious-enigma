@@ -15,8 +15,9 @@
  * ```
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import * as atlantean from '../services/atlanteanService';
+import { Role, type Message } from '../types';
 import type { 
   AtlanteanStatus, 
   FieldData, 
@@ -24,6 +25,9 @@ import type {
 } from '../services/atlanteanService';
 
 export interface UseAtlanteanReturn {
+  // Conversation state
+  messages: Message[];
+
   // Current status
   status: AtlanteanStatus | null;
   fields: FieldData | null;
@@ -34,6 +38,9 @@ export interface UseAtlanteanReturn {
   // Core functions
   query: (input: string, provider?: 'gemini' | 'edenai' | 'mock') => Promise<string>;
   triggerEvent: (event: LearningEventType, data?: Record<string, any>) => Promise<void>;
+  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+  appendMessage: (message: Message) => void;
+  clearMessages: () => void;
   
   // Simulation functions
   storeSimulation: (simulation: any, confidence?: number) => Promise<void>;
@@ -53,11 +60,27 @@ export interface UseAtlanteanReturn {
 }
 
 export function useAtlantean(): UseAtlanteanReturn {
+  const learningEventLastSentRef = useRef<Record<string, number>>({});
+  const [messages, setMessages] = useState<Message[]>([]);
   const [status, setStatus] = useState<AtlanteanStatus | null>(null);
   const [fields, setFields] = useState<FieldData | null>(null);
   const [isHealthy, setIsHealthy] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  const hydrateChatHistory = useCallback(async () => {
+    try {
+      const data = await atlantean.getChatHistory(80);
+      const restored = (data.messages || []).map((msg, idx) => ({
+        id: msg.id || `hist-${msg.timestamp}-${idx}`,
+        role: msg.role === 'user' ? Role.USER : Role.BOT,
+        content: msg.content,
+      })) as Message[];
+      setMessages(restored);
+    } catch (err) {
+      console.warn('Failed to hydrate chat history:', err);
+    }
+  }, []);
   
   // Check backend health on mount
   useEffect(() => {
@@ -66,8 +89,11 @@ export function useAtlantean(): UseAtlanteanReturn {
       setIsHealthy(healthy);
       
       if (healthy) {
-        await refreshStatus();
-        await refreshFields();
+        await Promise.all([
+          refreshStatus(),
+          refreshFields(),
+          hydrateChatHistory(),
+        ]);
       } else {
         setError('Atlantean backend not running. Start with: python atlantean_backend.py');
       }
@@ -131,7 +157,14 @@ export function useAtlantean(): UseAtlanteanReturn {
     event: LearningEventType,
     data: Record<string, any> = {}
   ): Promise<void> => {
+    const now = Date.now();
+    const lastSent = learningEventLastSentRef.current[event] || 0;
+    if (now - lastSent < 1200) {
+      return;
+    }
+
     try {
+      learningEventLastSentRef.current[event] = now;
       setError(null);
       const result = await atlantean.triggerLearningEvent(event, data);
       setStatus(result.status);
@@ -142,6 +175,14 @@ export function useAtlantean(): UseAtlanteanReturn {
       throw err;
     }
   }, [refreshFields]);
+
+  const appendMessage = useCallback((message: Message) => {
+    setMessages(prev => [...prev, message]);
+  }, []);
+
+  const clearMessages = useCallback(() => {
+    setMessages([]);
+  }, []);
   
   // Store simulation
   const storeSimulation = useCallback(async (
@@ -231,6 +272,7 @@ export function useAtlantean(): UseAtlanteanReturn {
   }, [refreshStatus, refreshFields]);
   
   return {
+    messages,
     status,
     fields,
     isHealthy,
@@ -238,6 +280,9 @@ export function useAtlantean(): UseAtlanteanReturn {
     error,
     query,
     triggerEvent,
+    setMessages,
+    appendMessage,
+    clearMessages,
     storeSimulation,
     recallSimulations,
     createSnapshot,

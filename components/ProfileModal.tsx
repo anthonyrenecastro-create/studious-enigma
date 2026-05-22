@@ -19,19 +19,9 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onSave, cu
 
   const [customPrimary, setCustomPrimary] = useState(theme.colors['--color-primary']);
   const [customAccent, setCustomAccent] = useState(theme.colors['--color-accent']);
-  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
-  const [llmProvider, setLlmProvider] = useState(localStorage.getItem('llm_provider') || 'gemini');
-
-  const handleProviderChange = (newProvider: string) => {
-    setLlmProvider(newProvider);
-    setApiKey(localStorage.getItem(`${newProvider}_api_key`) || '');
-  };
 
   useEffect(() => {
     setProfile(currentProfile);
-    const provider = localStorage.getItem('llm_provider') || 'gemini';
-    setLlmProvider(provider);
-    setApiKey(localStorage.getItem(`${provider}_api_key`) || '');
     // When the modal is opened, sync the color pickers with the current theme's colors
     if (isOpen) {
         const customThemeColors = JSON.parse(localStorage.getItem('qmai-custom-theme-colors') || '{}');
@@ -47,12 +37,6 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onSave, cu
 
   const handleSave = () => {
     onSave(profile);
-    localStorage.setItem('llm_provider', llmProvider);
-    if (apiKey) {
-      localStorage.setItem(`${llmProvider}_api_key`, apiKey);
-    } else {
-      localStorage.removeItem(`${llmProvider}_api_key`);
-    }
     // Check if the colors have been changed from the currently active theme's colors
     const originalPrimary = theme.colors['--color-primary'];
     const originalAccent = theme.colors['--color-accent'];
@@ -80,40 +64,6 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onSave, cu
         </div>
         
         <div className="space-y-6">
-          <div>
-            <h3 className="text-lg font-semibold mb-3" style={{ color: 'var(--color-primary)' }}>API Configuration</h3>
-            <div className="space-y-4 pl-2 border-l-2" style={{ borderColor: 'var(--color-border)' }}>
-                <div>
-                    <label htmlFor="llmProvider" className="block text-sm font-medium mb-1" style={{ color: 'var(--color-primary)' }}>LLM Provider</label>
-                    <select
-                    id="llmProvider"
-                    value={llmProvider}
-                    onChange={e => handleProviderChange(e.target.value)}
-                    className="w-full p-2 bg-gray-800/50 border rounded-md focus:outline-none focus:ring-2"
-                    style={{ borderColor: 'var(--color-border)', '--tw-ring-color': 'var(--color-accent)' } as any}
-                    >
-                        <option value="gemini">Google Gemini</option>
-                        <option value="openai">OpenAI</option>
-                    </select>
-                </div>
-                <div>
-                    <label htmlFor="apiKey" className="block text-sm font-medium mb-1" style={{ color: 'var(--color-primary)' }}>
-                        {llmProvider === 'gemini' ? 'Gemini API Key' : 'OpenAI API Key'}
-                    </label>
-                    <input
-                    id="apiKey"
-                    type="password"
-                    value={apiKey}
-                    onChange={e => setApiKey(e.target.value)}
-                    placeholder="Enter your API key"
-                    className="w-full p-2 bg-gray-800/50 border rounded-md focus:outline-none focus:ring-2"
-                    style={{ borderColor: 'var(--color-border)', '--tw-ring-color': 'var(--color-accent)' } as any}
-                    />
-                    <p className="text-xs text-gray-400 mt-1">Leave empty to use the default key. Your key is stored locally.</p>
-                </div>
-            </div>
-          </div>
-        
           <div>
             <h3 className="text-lg font-semibold mb-3" style={{ color: 'var(--color-primary)' }}>Identity</h3>
             <div className="space-y-4 pl-2 border-l-2" style={{ borderColor: 'var(--color-border)' }}>

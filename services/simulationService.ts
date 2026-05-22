@@ -1,9 +1,6 @@
 
 // This service generates metrics for visual diagnostics.
 // It now supports "Live Stress" inputs to reflect actual API performance.
-// Integrated with Atlantean Cold Memory for persistent simulations.
-
-import * as AtlanteanService from './atlanteanService';
 
 let currentTime = 0;
 let currentStability = 0.8;
@@ -58,41 +55,4 @@ export const resetSimulation = () => {
     currentTime = 0;
     currentStability = 0.8;
     lastAdjustment = 0;
-};
-
-/**
- * Store a simulation snapshot in Atlantean cold memory
- * This makes simulations persistent and searchable
- */
-export const storeSimulationSnapshot = async (
-    simulation: any,
-    scenario: string = 'general',
-    confidence: number = 0.5
-) => {
-    try {
-        await AtlanteanService.storeSimulation({
-            ...simulation,
-            scenario,
-            created_at: new Date().toISOString()
-        }, confidence);
-        
-        console.log(`📊 Simulation stored: ${scenario}`);
-    } catch (err) {
-        console.error('Failed to store simulation:', err);
-    }
-};
-
-/**
- * Recall simulations from cold memory
- * Search by scenario description
- */
-export const recallSimulations = async (query: string = 'simulation') => {
-    try {
-        const results = await AtlanteanService.recallSimulations(query);
-        console.log(`📊 Recalled ${results.length} simulations`);
-        return results;
-    } catch (err) {
-        console.error('Failed to recall simulations:', err);
-        return [];
-    }
 };

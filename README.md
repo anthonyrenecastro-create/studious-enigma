@@ -4,13 +4,6 @@
 
 # Run and deploy your AI Studio app
 
-## Why this exists
-
-Most LLM systems are stateless.
-This project demonstrates a practical architecture for augmenting LLMs
-with persistent identity, memory stratification, and learning—without
-fine-tuning or model modification.
-
 This contains everything you need to run your app locally.
 
 View your app in AI Studio: https://ai.studio/apps/drive/12CDszUJAxwc5CBTjwFTX8IKXHZUgE5LY

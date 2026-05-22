@@ -1,59 +1,57 @@
-version: '3.8'
-
 services:
   redis:
     image: redis:7-alpine
+    command: redis-server --appendonly yes
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
 
-  python-backend:
+  backend:
     build:
       context: .
       dockerfile: Dockerfile.python
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      VITE_GEMINI_API_KEY: ${VITE_GEMINI_API_KEY:-}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
       - "5001:5001"
-    environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - VITE_GEMINI_API_KEY=${VITE_GEMINI_API_KEY}
-      - REDIS_HOST=redis
     depends_on:
-      - redis
-    volumes:
-      - .:/app
-      - /app/node_modules
-    command: python atlantean_backend.py
-
-  node-backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
-    ports:
-      - "3001:3001"
-    environment:
-      - API_KEY=${API_KEY}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
-      - EDEN_AI_API_KEY=${EDEN_AI_API_KEY}
-    depends_on:
-      - python-backend
-    volumes:
-      - .:/app
-      - /app/node_modules
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
 
   frontend:
-    image: node:18-alpine
+    image: node:20-alpine
     working_dir: /app
+    environment:
+      VITE_ATLANTEAN_PROXY_TARGET: http://backend:5001
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      VITE_GEMINI_API_KEY: ${VITE_GEMINI_API_KEY:-}
     ports:
       - "3000:3000"
     volumes:
       - .:/app
-      - /app/node_modules
-    command: npm run dev -- --host 0.0.0.0
+      - node_modules_cache:/app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 3000"
     depends_on:
-      - node-backend
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   redis_data:
+  node_modules_cache:

@@ -1,38 +1,36 @@
 {
-  "name": "quadra-mind-ai-server",
+  "name": "studious-enigma",
   "version": "1.0.0",
-  "description": "Backend proxy for Q.M.A.I. to securely handle API requests.",
+  "description": "Q.M.A.I. frontend + backend workspace.",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "start:all": "concurrently \"npm run dev\" \"npm start\" \"python atlantean_backend.py\""
+    "preview": "vite preview"
   },
   "keywords": [],
   "author": "",
+  "license": "ISC",
   "dependencies": {
     "@google/genai": "^1.8.0",
-    "chart.js": "^4.5.1",
+    "chart.js": "^4.4.4",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "katex": "^0.16.27",
-    "mammoth": "^1.11.0",
+    "mammoth": "^1.8.0",
     "node-fetch": "^3.3.2",
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "react-markdown": "^10.1.0",
-    "rehype-katex": "^7.0.1",
-    "remark-gfm": "^4.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "rehype-katex": "^7.0.0",
+    "remark-gfm": "^4.0.0",
     "remark-math": "^6.0.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^5.1.2",
-    "concurrently": "^9.2.1",
-    "vite": "^7.3.1"
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.1"
   }
 }

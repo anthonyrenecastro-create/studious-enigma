@@ -205,7 +205,8 @@ class AtlanteanQuadraBridge:
     def store_simulation(
         self,
         simulation: Dict[str, Any],
-        confidence: float = 0.5
+        confidence: float = 0.5,
+        session_id: Optional[str] = None,
     ):
         """
         Store simulation result in cold memory.
@@ -225,7 +226,8 @@ class AtlanteanQuadraBridge:
                 'manifest_id': 'simulations',
                 'type': 'simulation',
                 'timestamp': datetime.now().isoformat(),
-                'scenario': simulation.get('scenario', 'unknown')
+                'scenario': simulation.get('scenario', 'unknown'),
+                'session_id': session_id,
             }
         )
 
@@ -378,10 +380,76 @@ class AtlanteanQuadraBridge:
             if len(facts) >= limit:
                 break
         return facts
+
+    def list_chat_history(
+        self,
+        session_id: Optional[str] = None,
+        limit: int = 80,
+    ) -> List[Dict[str, Any]]:
+        """Return chat turns for a session in chronological order."""
+        history: List[Dict[str, Any]] = []
+
+        try:
+            redis_conn = self.cold_memory.redis
+            item_keys = redis_conn.keys('item:*')
+            for key in item_keys:
+                raw = redis_conn.get(key)
+                if not raw:
+                    continue
+
+                try:
+                    item_dict = json.loads(raw)
+                    meta = item_dict.get('metadata', {})
+                    if meta.get('tombstone'):
+                        continue
+                    if meta.get('type') != 'chat_turn':
+                        continue
+                    if session_id and meta.get('session_id') != session_id:
+                        continue
+
+                    content_raw = str(item_dict.get('content', '')).strip()
+                    if not content_raw:
+                        continue
+
+                    role = str(meta.get('role', 'assistant')).lower()
+                    if role not in ('user', 'assistant'):
+                        role = 'assistant'
+
+                    try:
+                        payload = json.loads(content_raw)
+                        text = str(payload.get('content', '')).strip() or content_raw
+                    except Exception:
+                        text = content_raw
+
+                    ts_raw = meta.get('timestamp', '')
+                    try:
+                        ts_ms = int(datetime.fromisoformat(ts_raw).timestamp() * 1000)
+                    except Exception:
+                        ts_ms = int(datetime.now().timestamp() * 1000)
+
+                    key_text = key.decode('utf-8') if isinstance(key, bytes) else str(key)
+                    history.append({
+                        'id': key_text,
+                        'role': role,
+                        'content': text,
+                        'timestamp': ts_ms,
+                        'session_id': meta.get('session_id', 'default'),
+                    })
+                except Exception:
+                    continue
+        except Exception as e:
+            print(f'Failed to list chat history: {e}')
+            return []
+
+        history.sort(key=lambda m: m.get('timestamp', 0))
+        if limit > 0:
+            history = history[-limit:]
+        return history
     
     def list_all_simulations(
         self,
-        limit: int = 50
+        limit: int = 50,
+        session_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Return all stored simulations directly from Redis without embedding/search.
@@ -401,6 +469,9 @@ class AtlanteanQuadraBridge:
                     continue
                 if meta.get('type') != 'simulation':
                     continue
+                stored_session_id = meta.get('session_id')
+                if session_id and stored_session_id and stored_session_id != session_id:
+                    continue
                 try:
                     sim = json.loads(item_dict['content'])
                     ts_raw = meta.get('timestamp', '')
@@ -414,6 +485,7 @@ class AtlanteanQuadraBridge:
                         'confidence': meta.get('retrieval_weight', meta.get('relevance', 0.5)),
                         'learning_effect': meta.get('learning_weight', meta.get('relevance', 0.5)),
                         'timestamp': ts_ms,
+                        'session_id': stored_session_id,
                         'content': sim,
                     })
                 except Exception:

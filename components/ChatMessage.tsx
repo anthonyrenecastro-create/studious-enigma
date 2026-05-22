@@ -11,14 +11,6 @@ import Chart from 'chart.js/auto';
 // Global mermaid variable from script tag
 declare const mermaid: any;
 
-export interface ChatMessageProps {
-  message: Message;
-  onSpeak?: (text: string) => void;
-  isCurrentSpeaking?: boolean;
-  userAvatar?: string;
-  onLearningFeedback?: (messageId: string, feedback: 'positive' | 'negative' | 'correction') => void;
-}
-
 const MermaidDiagram: React.FC<{ chart: string }> = ({ chart }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const [svg, setSvg] = useState<string>('');
@@ -63,11 +55,10 @@ interface ChatMessageProps {
   isCurrentSpeaking?: boolean;
 }
 
-const ChatMessage: React.FC<ChatMessageProps> = ({ message, userAvatar, onSpeak, isCurrentSpeaking, onLearningFeedback }) => {
+const ChatMessage: React.FC<ChatMessageProps> = ({ message, userAvatar, onSpeak, isCurrentSpeaking }) => {
     const chartCanvasRef = useRef<HTMLCanvasElement>(null);
     const chartInstance = useRef<Chart | null>(null);
     const [imgLoading, setImgLoading] = useState(true);
-    const [feedbackGiven, setFeedbackGiven] = useState<string | null>(null);
 
     const safeContent = typeof message.content === 'string' 
         ? message.content
@@ -143,19 +134,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, userAvatar, onSpeak,
                         </button>
                     )}
                 </div>
-
-                {Array.isArray(message.attachments) && message.attachments.length > 0 && (
-                  <div className="mt-3 rounded-lg border border-white/10 bg-black/30 p-2">
-                    <div className="text-[9px] font-mono uppercase tracking-widest text-gray-500 mb-1">Attached Documents</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {message.attachments.map((name, index) => (
-                        <span key={`${name}-${index}`} className="text-[10px] px-2 py-1 rounded-md bg-white/5 border border-white/10 text-gray-300">
-                          {name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
                 
                 {message.mermaidData && (
                   <div className="mt-4">
@@ -175,69 +153,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, userAvatar, onSpeak,
                   <div className="mt-4 p-4 bg-black/40 rounded-xl border border-white/10 h-[320px] relative">
                     <div className="absolute top-2 left-2 text-[8px] font-mono text-gray-700 uppercase">Telemetry_Buffer</div>
                     <canvas ref={chartCanvasRef}></canvas>
-                  </div>
-                )}
-
-                {/* Learning Feedback Buttons (only for bot messages) */}
-                {!isUser && !message.isStreaming && safeContent && onLearningFeedback && (
-                  <div className="mt-3 flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <div className="text-[10px] text-gray-600 uppercase tracking-wider mr-2">Train:</div>
-                    <button
-                      onClick={() => {
-                        onLearningFeedback(message.id, 'positive');
-                        setFeedbackGiven('positive');
-                      }}
-                      disabled={feedbackGiven === 'positive'}
-                      className={`p-1.5 rounded-lg transition-all ${
-                        feedbackGiven === 'positive' 
-                          ? 'bg-green-500/20 text-green-400' 
-                          : 'bg-white/5 text-gray-500 hover:bg-green-500/10 hover:text-green-400'
-                      }`}
-                      title="Good response - reinforce this pattern"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={() => {
-                        onLearningFeedback(message.id, 'negative');
-                        setFeedbackGiven('negative');
-                      }}
-                      disabled={feedbackGiven === 'negative'}
-                      className={`p-1.5 rounded-lg transition-all ${
-                        feedbackGiven === 'negative'
-                          ? 'bg-red-500/20 text-red-400'
-                          : 'bg-white/5 text-gray-500 hover:bg-red-500/10 hover:text-red-400'
-                      }`}
-                      title="Poor response - reduce this pattern"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14H5.236a2 2 0 01-1.789-2.894l3.5-7A2 2 0 018.736 3h4.018a2 2 0 01.485.06l3.76.94m-7 10v5a2 2 0 002 2h.096c.5 0 .905-.405.905-.904 0-.715.211-1.413.608-2.008L17 13V4m-7 10h2m5-10h2a2 2 0 012 2v6a2 2 0 01-2 2h-2.5" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={() => {
-                        onLearningFeedback(message.id, 'correction');
-                        setFeedbackGiven('correction');
-                      }}
-                      disabled={feedbackGiven === 'correction'}
-                      className={`p-1.5 rounded-lg transition-all ${
-                        feedbackGiven === 'correction'
-                          ? 'bg-amber-500/20 text-amber-400'
-                          : 'bg-white/5 text-gray-500 hover:bg-amber-500/10 hover:text-amber-400'
-                      }`}
-                      title="Needs correction - trigger learning signal"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                    {feedbackGiven && (
-                      <span className="text-[10px] text-gray-600 ml-2">
-                        ✓ Learning applied
-                      </span>
-                    )}
                   </div>
                 )}
             </div>

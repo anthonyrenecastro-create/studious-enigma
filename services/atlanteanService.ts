@@ -70,6 +70,14 @@ export interface QueryResponse {
   status: AtlanteanStatus;
 }
 
+export interface ChatHistoryMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  session_id: string;
+}
+
 export interface ColdManifest {
   manifest_id: string;
   attached_at?: number;
@@ -77,6 +85,21 @@ export interface ColdManifest {
   detached?: boolean;
   item_ids?: string[];
   metadata?: Record<string, any>;
+}
+
+export interface AtlanteanSnapshotRecord {
+  id: string;
+  session_id: string;
+  label?: string;
+  created_at?: number | string;
+  version?: number;
+  source?: string;
+  phase_lock?: {
+    phi1_mean: number;
+    phi5_mean: number;
+    Phi: number;
+  };
+  hrm?: Record<string, any>;
 }
 
 export interface ReplayIntegrityProof {
@@ -90,6 +113,18 @@ export interface ReplayIntegrityProof {
   issues: Array<Record<string, any>>;
   replay_head_hash: string;
   verified_up_to_seq: number | null;
+}
+
+export interface SoulFileBundle {
+  schema_version: number;
+  exported_at: number;
+  session_id: string;
+  identity: Record<string, any> | null;
+  events: Array<Record<string, any>>;
+  checkpoints: Array<Record<string, any>>;
+  hot_state_hash: string;
+  hot_state: Record<string, any>;
+  hrm_state: Record<string, any>;
 }
 
 export type LearningEventType =
@@ -172,6 +207,25 @@ export async function getFields(sessionId?: string): Promise<FieldData> {
   const response = await fetch(`${ATLANTEAN_API_BASE}/fields?session_id=${encodeURIComponent(sid)}`);
   if (!response.ok) {
     throw new Error(`Failed to get fields: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Load persisted chat history for a session.
+ */
+export async function getChatHistory(
+  limit: number = 80,
+  sessionId?: string
+): Promise<{ session_id: string; messages: ChatHistoryMessage[] }> {
+  const sid = resolveSessionId(sessionId);
+  const params = new URLSearchParams({
+    session_id: sid,
+    limit: String(limit),
+  });
+  const response = await fetch(`${ATLANTEAN_API_BASE}/chat/history?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Failed to get chat history: ${response.statusText}`);
   }
   return response.json();
 }
@@ -288,6 +342,79 @@ export async function createSnapshot(
     throw new Error(`Failed to create snapshot: ${response.statusText}`);
   }
   
+  return response.json();
+}
+
+/**
+ * List indexed snapshots for Neural Archives
+ */
+export async function listSnapshots(
+  limit: number = 50,
+  sessionId?: string
+): Promise<{ session_id: string; snapshots: AtlanteanSnapshotRecord[] }> {
+  const sid = resolveSessionId(sessionId);
+  const params = new URLSearchParams({
+    session_id: sid,
+    limit: String(limit),
+  });
+
+  const response = await fetch(`${ATLANTEAN_API_BASE}/snapshots?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`Failed to list snapshots: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Restore hot-memory state from a saved snapshot
+ */
+export async function restoreSnapshot(
+  snapshotId: string,
+  sessionId?: string
+): Promise<{ success: boolean; session_id: string; snapshot_id: string; status: AtlanteanStatus }> {
+  const sid = resolveSessionId(sessionId);
+  const response = await fetch(`${ATLANTEAN_API_BASE}/snapshot/restore`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      snapshot_id: snapshotId,
+      session_id: sid,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to restore snapshot: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Delete a snapshot from archive index
+ */
+export async function deleteSnapshot(
+  snapshotId: string,
+  sessionId?: string
+): Promise<{ success: boolean; session_id: string; snapshot_id: string; remaining: number }> {
+  const sid = resolveSessionId(sessionId);
+  const response = await fetch(`${ATLANTEAN_API_BASE}/snapshot/delete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      snapshot_id: snapshotId,
+      session_id: sid,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to delete snapshot: ${response.statusText}`);
+  }
+
   return response.json();
 }
 
@@ -469,6 +596,24 @@ export async function replayIntegrityProof(
   const response = await fetch(`${ATLANTEAN_API_BASE}/integrity/replay${suffix}`);
   if (!response.ok) {
     throw new Error(`Failed replay proof: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+/**
+ * Export complete signed intelligence state for user-owned portability.
+ */
+export async function exportSoulFile(
+  sessionId?: string
+): Promise<{ bundle: SoulFileBundle }> {
+  const sid = resolveSessionId(sessionId);
+  const params = new URLSearchParams();
+  params.set('session_id', sid);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+
+  const response = await fetch(`${ATLANTEAN_API_BASE}/export${suffix}`);
+  if (!response.ok) {
+    throw new Error(`Failed to export soul file: ${response.statusText}`);
   }
   return response.json();
 }

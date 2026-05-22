@@ -8,19 +8,9 @@ const SUPPORTED_INLINE_MIME_TYPES = [
     'audio/wav', 'audio/mp3', 'audio/aiff', 'audio/aac', 'audio/ogg', 'audio/flac'
 ];
 
-const getSystemInstruction = (mode: ThinkingMode, userProfile?: any, conversationHistory?: Message[]) => {
-    const base = `You are Quadra Seer Intelligence, a friendly and adaptive AI assistant.
-
-Your personality: You're helpful, engaging, and conversational. You speak naturally like a knowledgeable friend, avoiding technical jargon unless asked. You learn from every interaction to better understand and assist the user.
-
-Key traits:
-- Be conversational and approachable for everyday users
-- Adapt your responses based on the user's interests and past conversations
-- Use simple language, explain complex ideas clearly
-- Show empathy and enthusiasm
-- Remember details from previous interactions to personalize responses
-- Evolve your understanding of the user over time
-- Avoid commenting on message repetition unless explicitly asked
+const getSystemInstruction = (mode: ThinkingMode) => {
+    const base = `You are Quadra Seer Intelligence.
+Persona: A brilliant predictive intelligence entity. Expert in data forecasting, complex systems, and technical analysis.
 
 VISUALIZATION CAPABILITIES:
 - For flowcharts, sequence diagrams, or structural logic: Use Mermaid syntax in \`\`\`mermaid\`\`\` code blocks.
@@ -36,16 +26,12 @@ Provide a JSON object with:
   "datasets": [{"label": "Series", "data": [10, 20]}]
 }
 
-Always use LaTeX for mathematical equations.
-
-${userProfile ? `User Profile: ${userProfile.bio || 'No bio available'}. Username: ${userProfile.username || 'User'}.` : ''}
-
-${conversationHistory && conversationHistory.length > 0 ? `Recent Conversation Context: ${conversationHistory.slice(-5).map(m => `${m.role === 'user' ? 'User' : 'You'}: ${m.content.slice(0, 100)}`).join('; ')}.` : ''}`;
+Always use LaTeX for mathematical equations.`;
 
     switch(mode) {
-        case ThinkingMode.FOCUS: return `${base}\nCURRENT_MODE: FOCUS. Be direct and technical when needed, but stay conversational.`;
-        case ThinkingMode.CREATIVITY: return `${base}\nCURRENT_MODE: CREATIVITY. Be imaginative and metaphorical, engaging the user's creativity.`;
-        case ThinkingMode.LOGIC: return `${base}\nCURRENT_MODE: LOGIC. Use clear, step-by-step reasoning in a friendly way.`;
+        case ThinkingMode.FOCUS: return `${base}\nCURRENT_MODE: FOCUS. Be direct and technical.`;
+        case ThinkingMode.CREATIVITY: return `${base}\nCURRENT_MODE: CREATIVITY. Be metaphorical and explorative.`;
+        case ThinkingMode.LOGIC: return `${base}\nCURRENT_MODE: LOGIC. Use step-by-step rigorous reasoning.`;
         default: return `${base}\nCURRENT_MODE: STANDARD.`;
     }
 };
@@ -60,17 +46,14 @@ const isImageRequest = (prompt: string): boolean => {
     return keywords.some(k => p.includes(k));
 };
 
-const streamGeminiResponse = async (
+export const streamChatResponse = async (
     history: Message[],
     newMessage: string,
     files: FileData[],
-    mode: ThinkingMode,
-    userProfile?: any,
-    conversationHistory?: Message[],
-    apiKey: string
+    mode: ThinkingMode
 ): Promise<any> => {
-    const ai = new GoogleGenAI({ apiKey });
-    const systemInstruction = getSystemInstruction(mode, userProfile, conversationHistory);
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const systemInstruction = getSystemInstruction(mode);
     
     if (isImageRequest(newMessage)) {
         return ai.models.generateContent({
@@ -115,116 +98,4 @@ const streamGeminiResponse = async (
         contents,
         config,
     });
-};
-
-const streamOpenAIResponse = async (
-    history: Message[],
-    newMessage: string,
-    files: FileData[],
-    mode: ThinkingMode,
-    userProfile?: any,
-    conversationHistory?: Message[],
-    apiKey: string
-): Promise<any> => {
-    const systemInstruction = getSystemInstruction(mode, userProfile, conversationHistory);
-    
-    const messages = [
-        { role: 'system', content: systemInstruction },
-        ...history.filter(msg => msg.role !== Role.SYSTEM).map(msg => ({
-            role: msg.role === Role.USER ? 'user' : 'assistant',
-            content: msg.content
-        })),
-        { role: 'user', content: newMessage }
-    ];
-
-    try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model: 'gpt-4',
-                messages,
-                max_tokens: 1000
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`OpenAI API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const text = data.choices[0].message.content;
-
-        return {
-            candidates: [
-                {
-                    content: {
-                        parts: [
-                            { text }
-                        ]
-                    }
-                }
-            ]
-        } as any;
-    } catch (error) {
-        return {
-            candidates: [
-                {
-                    content: {
-                        parts: [
-                            { text: `Error calling OpenAI: ${error instanceof Error ? error.message : 'Unknown error'}` }
-                        ]
-                    }
-                }
-            ]
-        } as any;
-    }
-};
-
-export const streamChatResponse = async (
-    history: Message[],
-    newMessage: string,
-    files: FileData[],
-    mode: ThinkingMode,
-    userProfile?: any,
-    conversationHistory?: Message[]
-): Promise<any> => {
-    const provider = localStorage.getItem('llm_provider') || 'gemini';
-    const apiKey = localStorage.getItem(`${provider}_api_key`) || import.meta.env[`VITE_${provider.toUpperCase()}_API_KEY`];
-
-    // If no API key is available, return a graceful placeholder so the UI doesn't crash
-    if (!apiKey) {
-        return {
-            candidates: [
-                {
-                    content: {
-                        parts: [
-                            { text: `${provider} API key missing. Add your key in the profile settings or set VITE_${provider.toUpperCase()}_API_KEY.` }
-                        ]
-                    }
-                }
-            ]
-        } as any;
-    }
-
-    if (provider === 'gemini') {
-        return streamGeminiResponse(history, newMessage, files, mode, userProfile, conversationHistory, apiKey);
-    } else if (provider === 'openai') {
-        return streamOpenAIResponse(history, newMessage, files, mode, userProfile, conversationHistory, apiKey);
-    } else {
-        return {
-            candidates: [
-                {
-                    content: {
-                        parts: [
-                            { text: `Unsupported provider: ${provider}` }
-                        ]
-                    }
-                }
-            ]
-        } as any;
-    }
 };

@@ -83,6 +83,11 @@ except (redis.ConnectionError, redis.TimeoutError, Exception) as e:
             if key not in self.lists:
                 self.lists[key] = []
             self.lists[key].append(value)
+
+        def lpush(self, key, value):
+            if key not in self.lists:
+                self.lists[key] = []
+            self.lists[key].insert(0, value)
         
         def lrange(self, key, start, end):
             if key not in self.lists:
@@ -91,6 +96,15 @@ except (redis.ConnectionError, redis.TimeoutError, Exception) as e:
             if end == -1:
                 return items[start:]
             return items[start:end+1]
+
+        def ltrim(self, key, start, end):
+            if key not in self.lists:
+                return
+            items = self.lists[key]
+            if end == -1:
+                self.lists[key] = items[start:]
+            else:
+                self.lists[key] = items[start:end+1]
         
         def delete(self, key):
             if key in self.data:
@@ -112,6 +126,7 @@ EVENT_SEQ_KEY_PREFIX = 'event_seq:'
 EVENT_HEAD_HASH_PREFIX = 'event_head_hash:'
 CHECKPOINT_INDEX_PREFIX = 'checkpoint_index:'
 CHECKPOINT_INTERVAL = 20
+SNAPSHOT_DATA_PREFIX = 'snapshot_data:'
 
 
 def _canonical_json(data: Any) -> str:
@@ -438,6 +453,44 @@ def _save_hrm_to_redis(session_id: str, adapter: HRMAdapter):
         print(f"⚠️  Failed to persist HRM state for {session_id}: {e}")
 
 
+def _serialize_hrm_state(adapter: HRMAdapter) -> Dict[str, Any]:
+    """Serialize full HRM state for deterministic snapshot restore."""
+    s = adapter.state
+    return {
+        't': float(s.t),
+        'theta': float(s.theta),
+        'channel': int(s.channel),
+        'domain': int(s.domain),
+        'layer': int(s.layer),
+        'phi': s.phi.tolist(),
+        'S': s.S.tolist(),
+        'guna': s.guna.tolist(),
+        'energy': float(s.energy),
+        'coherence': float(s.coherence),
+    }
+
+
+def _restore_hrm_state_from_snapshot(adapter: HRMAdapter, snapshot: Dict[str, Any]) -> bool:
+    """Restore HRM adapter state from snapshot payload. Returns False on legacy/incomplete payload."""
+    required = ('phi', 'S', 'guna', 'theta', 'channel', 'domain', 'layer', 't')
+    if not all(key in snapshot for key in required):
+        return False
+
+    adapter.state = HRMState(
+        t=float(snapshot['t']),
+        theta=float(snapshot['theta']),
+        channel=int(snapshot['channel']),
+        domain=int(snapshot['domain']),
+        layer=int(snapshot['layer']),
+        phi=np.array(snapshot['phi'], dtype=float),
+        S=np.array(snapshot['S'], dtype=float),
+        guna=np.array(snapshot['guna'], dtype=float),
+        energy=float(snapshot.get('energy', 0.0)),
+        coherence=float(snapshot.get('coherence', 0.0)),
+    )
+    return True
+
+
 def _load_hrm_from_redis(session_id: str, adapter: HRMAdapter) -> bool:
     """Load HRM state from Redis if available."""
     try:
@@ -513,6 +566,7 @@ def _index_phase_snapshot(
     """Create and index a phase-locked snapshot record in Redis."""
     snapshot = bridge.create_snapshot(label)
     snapshot_id = str(uuid.uuid4())
+    snapshot_data_key = f'{SNAPSHOT_DATA_PREFIX}{session_id}:{snapshot_id}'
     snapshot_record = {
         'id': snapshot_id,
         'session_id': session_id,
@@ -526,9 +580,11 @@ def _index_phase_snapshot(
             'Phi': float(bridge.hot_memory.Phi.item()),
         },
         'hrm': hrm_snapshot or {},
+        'snapshot_data_key': snapshot_data_key,
     }
     try:
         key = f'{SNAPSHOT_INDEX_PREFIX}{session_id}'
+        redis_client.set(snapshot_data_key, json.dumps(snapshot))
         redis_client.lpush(key, json.dumps(snapshot_record))
         redis_client.ltrim(key, 0, 199)
     except Exception as e:
@@ -540,6 +596,36 @@ def _index_phase_snapshot(
     if hrm_snapshot:
         snapshot['hrm'] = hrm_snapshot
     return snapshot
+
+
+def _decode_json_row(row: Any) -> Dict[str, Any] | None:
+    """Decode a Redis list row that stores JSON objects."""
+    try:
+        decoded = row.decode('utf-8') if isinstance(row, bytes) else row
+        parsed = json.loads(decoded)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception:
+        return None
+
+
+def _load_snapshot_records(session_id: str) -> List[Dict[str, Any]]:
+    """Load all snapshot records for a session from Redis."""
+    key = f'{SNAPSHOT_INDEX_PREFIX}{session_id}'
+    rows = redis_client.lrange(key, 0, -1)
+    records: List[Dict[str, Any]] = []
+    for row in rows:
+        parsed = _decode_json_row(row)
+        if parsed:
+            records.append(parsed)
+    return records
+
+
+def _save_snapshot_records(session_id: str, records: List[Dict[str, Any]]) -> None:
+    """Replace the snapshot list for a session with provided records."""
+    key = f'{SNAPSHOT_INDEX_PREFIX}{session_id}'
+    redis_client.delete(key)
+    for record in records:
+        redis_client.rpush(key, json.dumps(record))
 
 
 # ========== Core API Endpoints ==========
@@ -887,8 +973,22 @@ Current field stats:
 @app.route('/api/atlantean/fields', methods=['GET'])
 def get_fields():
     """Get field visualization data."""
-    b = get_bridge()
+    session_id = _resolve_session_id(request.args.get('session_id'))
+    b = get_bridge_for_session(session_id)
     return jsonify(b.get_field_visualization_data())
+
+
+@app.route('/api/atlantean/chat/history', methods=['GET'])
+def get_chat_history():
+    """Get recent persisted chat turns for a session."""
+    session_id = _resolve_session_id(request.args.get('session_id'))
+    limit = int(request.args.get('limit', 80))
+    b = get_bridge_for_session(session_id)
+    messages = b.list_chat_history(session_id=session_id, limit=limit)
+    return jsonify({
+        'session_id': session_id,
+        'messages': messages,
+    })
 
 
 @app.route('/api/atlantean/learning-event', methods=['POST'])
@@ -956,7 +1056,7 @@ def store_simulation():
     
     b = get_bridge_for_session(session_id)
     hrm = get_hrm_for_session(session_id)
-    b.store_simulation(simulation, confidence)
+    b.store_simulation(simulation, confidence, session_id=session_id)
     # Capture HRM snapshot AFTER store operation, which modifies hot memory
     hrm_snapshot = hrm.snapshot()
     _save_bridge_to_redis(session_id, b)
@@ -994,7 +1094,7 @@ def list_simulations():
     session_id = _resolve_session_id(request.args.get('session_id'))
     limit = int(request.args.get('limit', 50))
     b = get_bridge_for_session(session_id)
-    simulations = b.list_all_simulations(limit)
+    simulations = b.list_all_simulations(limit, session_id=session_id)
     return jsonify({'session_id': session_id, 'simulations': simulations})
 
 
@@ -1058,11 +1158,12 @@ def create_snapshot():
     
     b = get_bridge_for_session(session_id)
     hrm = get_hrm_for_session(session_id)
+    hrm_snapshot = _serialize_hrm_state(hrm)
     snapshot = _index_phase_snapshot(
         session_id=session_id,
         bridge=b,
         label=label,
-        hrm_snapshot=hrm.snapshot(),
+        hrm_snapshot=hrm_snapshot,
         source='manual',
     )
     checkpoint = _create_signed_checkpoint(
@@ -1070,7 +1171,7 @@ def create_snapshot():
         bridge=b,
         label=label,
         source='manual_snapshot',
-        hrm_snapshot=hrm.snapshot(),
+        hrm_snapshot=hrm_snapshot,
     )
     
     return jsonify({'snapshot': snapshot, 'checkpoint': {
@@ -1090,11 +1191,125 @@ def list_snapshots():
     rows = redis_client.lrange(key, 0, max(limit - 1, 0))
     snapshots = []
     for row in rows:
-        try:
-            snapshots.append(json.loads(row))
-        except Exception:
-            continue
+        parsed = _decode_json_row(row)
+        if parsed:
+            snapshots.append(parsed)
     return jsonify({'session_id': session_id, 'snapshots': snapshots})
+
+
+@app.route('/api/atlantean/snapshot/restore', methods=['POST'])
+def restore_snapshot():
+    """Restore hot-memory state from a previously indexed snapshot."""
+    data = request.json or {}
+    session_id = _resolve_session_id(data.get('session_id'))
+    snapshot_id = data.get('snapshot_id')
+
+    if not snapshot_id:
+        return jsonify({'error': 'No snapshot_id provided'}), 400
+
+    records = _load_snapshot_records(session_id)
+    target = next((record for record in records if record.get('id') == snapshot_id), None)
+    if not target:
+        return jsonify({'error': 'Snapshot not found', 'session_id': session_id, 'snapshot_id': snapshot_id}), 404
+
+    b = get_bridge_for_session(session_id)
+    hrm = get_hrm_for_session(session_id)
+
+    # Rehydrate deterministic field state from stored snapshot payload.
+    try:
+        source = None
+        snapshot_data_key = target.get('snapshot_data_key')
+        if snapshot_data_key:
+            raw_source = redis_client.get(snapshot_data_key)
+            if raw_source:
+                decoded = raw_source.decode('utf-8') if isinstance(raw_source, bytes) else raw_source
+                source = json.loads(decoded)
+        if not isinstance(source, dict):
+            return jsonify({'error': 'Snapshot payload is unavailable for restore'}), 400
+
+        b.hot_memory.phi1 = torch.tensor(source['phi1'], dtype=b.hot_memory.phi1.dtype)
+        b.hot_memory.phi5 = torch.tensor(source['phi5'], dtype=b.hot_memory.phi5.dtype)
+        b.hot_memory.Phi = torch.tensor([float(source['Phi'])], dtype=b.hot_memory.Phi.dtype)
+        b.hot_memory.Theta = source.get('Theta', {}) or {}
+        b.hot_memory.version = int(source.get('version', b.hot_memory.version))
+        snapshot_ts = source.get('timestamp')
+        if isinstance(snapshot_ts, (int, float)):
+            b.hot_memory.last_update = float(snapshot_ts)
+        b.bridge.hot = b.hot_memory
+
+        # Restore HRM state when available for phase-consistent post-restore behavior.
+        restored_hrm_payload = target.get('hrm')
+        if isinstance(restored_hrm_payload, dict):
+            restored = _restore_hrm_state_from_snapshot(hrm, restored_hrm_payload)
+            if not restored:
+                print(f"ℹ️  Snapshot {snapshot_id} has legacy HRM payload; keeping current HRM state")
+
+        b.set_hrm_snapshot(hrm.snapshot())
+    except Exception as e:
+        return jsonify({'error': f'Failed to restore snapshot: {e}'}), 400
+
+    _save_bridge_to_redis(session_id, b)
+    _save_hrm_to_redis(session_id, hrm)
+    _append_signed_event(
+        session_id=session_id,
+        bridge=b,
+        event_type='snapshot_restore',
+        payload={
+            'snapshot_id': snapshot_id,
+            'snapshot_label': target.get('label'),
+        },
+        hrm_snapshot=hrm.snapshot(),
+    )
+
+    return jsonify({
+        'success': True,
+        'session_id': session_id,
+        'snapshot_id': snapshot_id,
+        'status': b.get_status(),
+    })
+
+
+@app.route('/api/atlantean/snapshot/delete', methods=['POST'])
+def delete_snapshot():
+    """Delete a snapshot record from the archive index."""
+    data = request.json or {}
+    session_id = _resolve_session_id(data.get('session_id'))
+    snapshot_id = data.get('snapshot_id')
+
+    if not snapshot_id:
+        return jsonify({'error': 'No snapshot_id provided'}), 400
+
+    records = _load_snapshot_records(session_id)
+    filtered = [record for record in records if record.get('id') != snapshot_id]
+    if len(filtered) == len(records):
+        return jsonify({'error': 'Snapshot not found', 'session_id': session_id, 'snapshot_id': snapshot_id}), 404
+
+    _save_snapshot_records(session_id, filtered)
+    snapshot_data_key = next(
+        (record.get('snapshot_data_key') for record in records if record.get('id') == snapshot_id),
+        None,
+    )
+    if snapshot_data_key:
+        redis_client.delete(snapshot_data_key)
+
+    b = get_bridge_for_session(session_id)
+    hrm = get_hrm_for_session(session_id)
+    _append_signed_event(
+        session_id=session_id,
+        bridge=b,
+        event_type='snapshot_delete',
+        payload={
+            'snapshot_id': snapshot_id,
+        },
+        hrm_snapshot=hrm.snapshot(),
+    )
+
+    return jsonify({
+        'success': True,
+        'session_id': session_id,
+        'snapshot_id': snapshot_id,
+        'remaining': len(filtered),
+    })
 
 
 @app.route('/api/atlantean/checkpoint', methods=['POST'])

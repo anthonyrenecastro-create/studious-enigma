@@ -1,9 +1,33 @@
 #!/bin/bash
 
 # Start Everything Script for Studious Enigma
-# Starts Redis (if needed), Python backend, Node backend, then frontend.
+# Starts full stack via docker compose by default.
+# Use "./start.sh local" to run the legacy local process mode.
 
 set -euo pipefail
+
+MODE="${1:-docker}"
+
+run_compose() {
+    echo "🚀 Starting full stack with docker compose (frontend + backend + redis)"
+    if docker compose version >/dev/null 2>&1; then
+        exec docker compose up --build
+    elif command -v docker-compose >/dev/null 2>&1; then
+        exec docker-compose up --build
+    else
+        echo "❌ Docker Compose not found. Install Docker Desktop/Compose or run './start.sh local'."
+        exit 1
+    fi
+}
+
+if [[ "${MODE}" == "docker" || "${MODE}" == "--docker" ]]; then
+    run_compose
+fi
+
+if [[ "${MODE}" != "local" && "${MODE}" != "--local" ]]; then
+    echo "Usage: ./start.sh [docker|local]"
+    exit 1
+fi
 
 PY_BACKEND_PORT="${PY_BACKEND_PORT:-5001}"
 PY_BACKEND_URL="http://127.0.0.1:${PY_BACKEND_PORT}"

@@ -1,7 +1,33 @@
 #!/bin/bash
 
 # Phase 1 Integration Startup Script
-# Starts both Atlantean Backend and Quadra-Seer Frontend
+# Starts full integration stack via docker compose by default.
+# Use "./start_integration.sh local" for legacy local process mode.
+
+set -euo pipefail
+
+MODE="${1:-docker}"
+
+run_compose() {
+    echo "🚀 Starting integration stack with docker compose (frontend + backend + redis)"
+    if docker compose version >/dev/null 2>&1; then
+        exec docker compose up --build
+    elif command -v docker-compose >/dev/null 2>&1; then
+        exec docker-compose up --build
+    else
+        echo "❌ Docker Compose not found. Install Docker Desktop/Compose or run './start_integration.sh local'."
+        exit 1
+    fi
+}
+
+if [[ "${MODE}" == "docker" || "${MODE}" == "--docker" ]]; then
+    run_compose
+fi
+
+if [[ "${MODE}" != "local" && "${MODE}" != "--local" ]]; then
+    echo "Usage: ./start_integration.sh [docker|local]"
+    exit 1
+fi
 
 echo "=================================================="
 echo "  ATLANTEAN + QUADRA-SEER INTEGRATION"
