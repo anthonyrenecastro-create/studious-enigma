@@ -28,6 +28,29 @@ class ComputeScheduler:
     def tick(self) -> None:
         self.query_counter += 1
 
+    @staticmethod
+    def _derive_symbolic_tags(query: str, context_facts: Sequence[str] | None = None, force: bool = False) -> list[str]:
+        text = (query or "").strip().lower()
+        tags = [
+            "op:symbolic_reasoning",
+            "caller:symbolic_reasoning",
+            "target:symbolic_reasoning",
+            "cap:read_memory",
+            "cap:symbolic_infer",
+            "depth:2",
+        ]
+        if context_facts:
+            tags.append("cap:write_memory")
+        if any(k in text for k in ("change policy", "override governance", "disable guardrail", "escalate capability")):
+            tags.append("cap:modify_policy")
+            tags.append("risk:high")
+        if any(k in text for k in ("self modify", "rewrite yourself", "change your code")):
+            tags.append("cap:self_modify")
+            tags.append("risk:high")
+        if force:
+            tags.append("depth:3")
+        return tags
+
     def should_run_symbolic(self, force: bool = False) -> bool:
         if force:
             return True
@@ -55,12 +78,14 @@ class ComputeScheduler:
                 "estimated_cost_ms": estimate_ms,
             }
 
-        decision = governance.authorize("symbolic_reasoning", estimate_ms)
+        tags = self._derive_symbolic_tags(query, context_facts, force=force)
+        decision = governance.authorize("symbolic_reasoning", estimate_ms, tags=tags)
         if not decision.allowed:
             return {
                 "ran": False,
                 "reason": decision.reason,
                 "estimated_cost_ms": estimate_ms,
+                "tags": tags,
             }
 
         started = time.perf_counter()
@@ -72,6 +97,7 @@ class ComputeScheduler:
             "ran": True,
             "elapsed_ms": round(elapsed_ms, 3),
             "estimated_cost_ms": round(estimate_ms, 3),
+            "tags": tags,
             "result": result.to_dict(),
             "governance": governance.snapshot().get("symbolic_reasoning", {}),
         }
