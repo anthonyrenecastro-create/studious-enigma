@@ -39,6 +39,30 @@ Run CPU batch training benchmark for HRM:
 python benchmarks/hrm_cpu_batch_benchmark.py --batch-size 16 --steps 100 --epochs 3
 ```
 
+## QUADRA Symbolic Governance Modules
+
+New modules in `atlantean_core`:
+- `symbolic_reasoner.py`
+- `governance.py`
+- `scheduler.py`
+
+These modules are compute-gated and optional by design. They do not run continuously.
+
+### Compute-Gating Controls
+
+Set environment variables to enable and bound optional symbolic reasoning:
+
+```bash
+export QUADRA_SYMBOLIC_ENABLED=1
+export QUADRA_SYMBOLIC_EVERY_N_QUERIES=25
+export QUADRA_SYMBOLIC_MAX_COMPUTE_MS=6.0
+export QUADRA_SYMBOLIC_BUDGET_MS_PER_MIN=120.0
+export QUADRA_GOVERNANCE_WINDOW_SECONDS=60
+export QUADRA_GOVERNANCE_MAX_INVOCATIONS=32
+```
+
+Defaults keep symbolic reasoning disabled unless explicitly enabled.
+
 ## Which GUI Is Running
 
 This repo includes two separate UI surfaces:

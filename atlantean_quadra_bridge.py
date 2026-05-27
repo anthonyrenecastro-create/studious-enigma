@@ -36,6 +36,9 @@ from learning import (
 )
 from sync import AtlanteanSyncEngine, MergeStrategy
 from llm_interface import call_llm_with_context
+from governance import GovernanceController, GovernancePolicy
+from scheduler import ComputeGatingControls, ComputeScheduler
+from symbolic_reasoner import SymbolicReasoner
 
 
 class QuadraLearningEvent:
@@ -116,6 +119,27 @@ class AtlanteanQuadraBridge:
         # Latest HRM snapshot — kept current by callers via set_hrm_snapshot().
         self._hrm_snapshot: Dict[str, Any] = {}
 
+        # Optional symbolic/governance stack (compute-bounded and explicit).
+        symbolic_enabled = os.getenv('QUADRA_SYMBOLIC_ENABLED', '0') == '1'
+        self.compute_controls = ComputeGatingControls(
+            enable_symbolic_reasoning=symbolic_enabled,
+            symbolic_every_n_queries=int(os.getenv('QUADRA_SYMBOLIC_EVERY_N_QUERIES', '25')),
+            symbolic_max_compute_ms_per_call=float(os.getenv('QUADRA_SYMBOLIC_MAX_COMPUTE_MS', '6.0')),
+            symbolic_budget_ms_per_minute=float(os.getenv('QUADRA_SYMBOLIC_BUDGET_MS_PER_MIN', '120.0')),
+        )
+        self.governance = GovernanceController(
+            GovernancePolicy(
+                allow_symbolic_reasoning=symbolic_enabled,
+                window_seconds=int(os.getenv('QUADRA_GOVERNANCE_WINDOW_SECONDS', '60')),
+                max_symbolic_invocations_per_window=int(os.getenv('QUADRA_GOVERNANCE_MAX_INVOCATIONS', '32')),
+                max_symbolic_compute_ms_per_window=float(os.getenv('QUADRA_SYMBOLIC_BUDGET_MS_PER_MIN', '120.0')),
+                max_single_symbolic_compute_ms=float(os.getenv('QUADRA_SYMBOLIC_MAX_COMPUTE_MS', '6.0')),
+            )
+        )
+        self.scheduler = ComputeScheduler(self.compute_controls)
+        self.symbolic_reasoner = SymbolicReasoner()
+        self.last_symbolic_decision: Dict[str, Any] = {"ran": False, "reason": "not-run"}
+
     # ========== HRM Field Coupling ==========
 
     def set_hrm_snapshot(self, snapshot: Dict[str, Any]) -> None:
@@ -189,16 +213,35 @@ class AtlanteanQuadraBridge:
         Returns:
             LLM response (ephemeral - not stored)
         """
+        # Advance scheduler cadence counter regardless of optional module use.
+        self.scheduler.tick()
+
         # Use Atlantean's stateless interface
         response = call_llm_with_context(
             user_input,
             self.hot_memory
+        )
+
+        # Optional explicit symbolic layer, compute-gated and governance-controlled.
+        # Disabled by default unless QUADRA_SYMBOLIC_ENABLED=1 or force_symbolic=True.
+        force_symbolic = bool(llm_kwargs.get('force_symbolic', False))
+        context_facts = llm_kwargs.get('symbolic_context_facts')
+        self.last_symbolic_decision = self.scheduler.run_symbolic_if_allowed(
+            reasoner=self.symbolic_reasoner,
+            governance=self.governance,
+            query=user_input,
+            context_facts=context_facts,
+            force=force_symbolic,
         )
         
         # Note: We do NOT store the prompt or response
         # State lives in hot_memory fields only
         
         return response
+
+    def governance_snapshot(self) -> Dict[str, Any]:
+        """Return current governance counters for optional modules."""
+        return self.governance.snapshot()
     
     # ========== Simulation Integration ==========
     
