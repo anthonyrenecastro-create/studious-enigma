@@ -617,23 +617,22 @@ def get_bridge() -> 'AtlanteanQuadraBridge':
 def _resolve_session_id(explicit_session_id: str | None = None) -> str:
     """Resolve a server-authoritative session id.
 
-    Client-provided session ids are ignored to prevent horizontal state access.
+    If a stable session id is already bound in the cookie session, enforce it.
+    If no cookie session exists yet, allow a client-provided session id and bind
+    it to the server session so stateless clients can remain consistent.
     """
+    explicit = str(explicit_session_id).strip() if explicit_session_id else None
+
     stable = session.get('atlantean_session_id')
     if stable:
-        if explicit_session_id and explicit_session_id != stable:
+        if explicit and explicit != stable:
             print("⚠️  Ignoring client-provided session_id override")
         return str(stable)
 
-    sid = getattr(session, 'sid', None)
-    generated = str(sid) if sid else str(uuid.uuid4())
-    session['atlantean_session_id'] = generated
+    sid = explicit or str(getattr(session, 'sid', None) or uuid.uuid4())
+    session['atlantean_session_id'] = sid
     session.modified = True
-
-    if explicit_session_id and explicit_session_id != generated:
-        print("⚠️  Ignoring client-provided session_id override")
-
-    return generated
+    return sid
 
 
 def _index_phase_snapshot(
