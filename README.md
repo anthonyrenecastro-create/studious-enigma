@@ -19,6 +19,26 @@ View your app in AI Studio: https://ai.studio/apps/drive/12CDszUJAxwc5CBTjwFTX8I
 3. Run the app:
    `npm run dev`
 
+## Validation And Benchmarks
+
+Run the full validation suite:
+
+```bash
+python tests/run_validation.py
+```
+
+Includes:
+- HRM simulation tests
+- Hot/cold memory persistence tests
+- Sync conflict tests
+- Stateless LLM enforcement tests
+
+Run CPU batch training benchmark for HRM:
+
+```bash
+python benchmarks/hrm_cpu_batch_benchmark.py --batch-size 16 --steps 100 --epochs 3
+```
+
 ## Which GUI Is Running
 
 This repo includes two separate UI surfaces:

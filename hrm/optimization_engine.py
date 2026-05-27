@@ -21,7 +21,7 @@ def apply(state: HRMState, metrics: dict, params: HRMConfig) -> None:
     state.coherence = (1.0 - params.coherence_gain) * state.coherence + params.coherence_gain * metrics["coherence"]
 
     # Adapt guna weights towards coherent / low-energy dynamics.
-    target = np.array(
+    base_target = np.array(
         [
             0.3 + 0.4 * state.coherence,
             0.4 - 0.2 * state.coherence,
@@ -29,6 +29,14 @@ def apply(state: HRMState, metrics: dict, params: HRMConfig) -> None:
         ],
         dtype=float,
     )
+
+    guna_count = int(max(1, params.guna_components))
+    if guna_count == 3:
+        target = base_target
+    else:
+        target = np.full((guna_count,), 1.0 / guna_count, dtype=float)
+        target[: min(3, guna_count)] = base_target[: min(3, guna_count)]
+
     target = np.clip(target, 0.05, 0.9)
     target /= np.sum(target)
     state.guna = 0.9 * state.guna + 0.1 * target

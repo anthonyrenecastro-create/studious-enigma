@@ -18,4 +18,17 @@ def route(state: HRMState, params: HRMConfig) -> HRMState:
     if abs(layer_signal) > params.topology_threshold:
         state.layer = (state.layer + (1 if layer_signal > 0 else -1)) % params.max_layers
 
+    s2 = float(state.S[2]) if state.S.size > 2 else 0.0
+    if abs(s2) > params.topology_threshold:
+        state.projection_mode = (state.projection_mode + (1 if s2 > 0 else -1)) % params.projection_modes
+
+    # Derive a bounded operational state from structural coordinates.
+    packed = (
+        (state.channel * params.max_domains * params.max_layers * params.projection_modes)
+        + (state.domain * params.max_layers * params.projection_modes)
+        + (state.layer * params.projection_modes)
+        + state.projection_mode
+    )
+    state.operational_state = packed % params.operational_states
+
     return state
