@@ -19,6 +19,7 @@ import time
 import hashlib
 import json
 import re
+import base64
 from importlib import import_module
 import redis
 import numpy as np
@@ -730,13 +731,49 @@ def query():
     }
     """
     data = request.json
-    user_input = data.get('input', '')
+    user_input = str(data.get('input', '') or '')
     llm_provider = data.get('llm_provider', 'gemini')
     api_key = data.get('api_key') or GEMINI_API_KEY
     session_id = _resolve_session_id(data.get('session_id'))
     history = data.get('history', [])
-    
-    if not user_input:
+    files = data.get('files', [])
+
+    normalized_files = []
+    text_exts = {
+        'txt', 'md', 'csv', 'json', 'xml', 'yaml', 'yml', 'log', 'py', 'js', 'ts', 'tsx', 'jsx', 'html', 'css'
+    }
+    if isinstance(files, list):
+        for raw in files[:8]:
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get('name', 'unnamed'))
+            mime_type = str(raw.get('type', 'application/octet-stream'))
+            extracted_text = str(raw.get('extractedText', '') or '')
+            content_b64 = str(raw.get('content', '') or '')
+
+            # Fallback: decode text-like attachments when client parser did not
+            # produce extractedText (e.g., plain text payloads).
+            if not extracted_text and content_b64:
+                lower_name = name.lower()
+                ext = lower_name.rsplit('.', 1)[-1] if '.' in lower_name else ''
+                is_text_like = mime_type.startswith('text/') or ext in text_exts
+                if is_text_like:
+                    try:
+                        decoded_bytes = base64.b64decode(content_b64, validate=False)
+                        extracted_text = decoded_bytes.decode('utf-8', errors='ignore')
+                    except Exception:
+                        extracted_text = ''
+
+            normalized_files.append({
+                'name': name,
+                'type': mime_type,
+                'extracted_text': extracted_text,
+            })
+
+    if not user_input.strip() and normalized_files:
+        user_input = 'Analyze the attached documents and summarize key points.'
+
+    if not user_input.strip():
         return jsonify({'error': 'No input provided'}), 400
     
     b = get_bridge_for_session(session_id)
@@ -826,7 +863,9 @@ You are a brilliant predictive intelligence entity, expert in data forecasting, 
 Respond naturally and helpfully to the user's query.
 Never claim internal outages, disruptions, anomalies, data-stream failures, or inaccessible processing resources.
 Never describe hidden internal system state.
-If details are missing, ask a concise clarifying question and provide the best actionable guidance you can."""
+If details are missing, ask a concise clarifying question and provide the best actionable guidance you can.
+If an "Attached files" section is provided below, treat those file excerpts as available context from the user.
+Do not ask the user to upload the same document again unless every attachment is marked as binary/no extracted text."""
             
             history_lines = []
             for turn in history[-12:]:
@@ -858,11 +897,26 @@ If details are missing, ask a concise clarifying question and provide the best a
 
             facts_context = "\n".join([f"- {fact}" for fact in recalled_facts])
 
+            file_lines = []
+            for file in normalized_files:
+                snippet = file['extracted_text'].strip()
+                if len(snippet) > 1200:
+                    snippet = snippet[:1200] + '...'
+                if snippet:
+                    file_lines.append(
+                        f"- {file['name']} ({file['type']}):\n"
+                        f"  Extracted content:\n{snippet}"
+                    )
+                else:
+                    file_lines.append(f"- {file['name']} ({file['type']}): [binary/no extracted text]")
+            files_context = "\n\n".join(file_lines) if file_lines else "- No attachments"
+
             full_prompt = (
                 f"{system_prompt}\n\n"
                 f"Conversation so far:\n{conversation_context}\n\n"
                 f"High-confidence recalled user facts:\n{facts_context}\n\n"
                 f"Recalled memory from prior chats/domains:\n{memory_context}\n\n"
+                f"Attached files ({len(normalized_files)}):\n{files_context}\n\n"
                 f"User: {user_input}\n"
                 f"Assistant:"
             )

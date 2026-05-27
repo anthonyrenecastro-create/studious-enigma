@@ -27,6 +27,7 @@ const ChatInterface: React.FC = () => {
   const [isFileParsing, setIsFileParsing] = useState(false);
   const [simulationHistory, setSimulationHistory] = useState<any[]>([]);
   const [pendingFiles, setPendingFiles] = useState<FileData[]>([]);
+  const [previewFileIndex, setPreviewFileIndex] = useState<number | null>(null);
   const [isProfileModalOpen, setProfileModalOpen] = useState(false);
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>(ThinkingMode.STANDARD);
   const [audioState, setAudioState] = useState(getAudioState());
@@ -100,7 +101,36 @@ const ChatInterface: React.FC = () => {
 
   const removeFile = (index: number) => {
     setPendingFiles(prev => prev.filter((_, i) => i !== index));
+    setPreviewFileIndex(prev => {
+      if (prev === null) return null;
+      if (prev === index) return null;
+      if (prev > index) return prev - 1;
+      return prev;
+    });
   };
+
+  const formatFileSize = (bytes: number): string => {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+      return '0 B';
+    }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIdx = 0;
+    while (size >= 1024 && unitIdx < units.length - 1) {
+      size /= 1024;
+      unitIdx += 1;
+    }
+    return `${size.toFixed(unitIdx === 0 ? 0 : 1)} ${units[unitIdx]}`;
+  };
+
+  const selectedPreviewFile =
+    previewFileIndex !== null && previewFileIndex >= 0 && previewFileIndex < pendingFiles.length
+      ? pendingFiles[previewFileIndex]
+      : null;
+
+  const selectedPreviewUrl = selectedPreviewFile
+    ? `data:${selectedPreviewFile.type || 'application/octet-stream'};base64,${selectedPreviewFile.content}`
+    : null;
 
   const persistSession = useCallback(async (currentMessages: Message[], currentSim: any[]) => {
     if (!convoId) return;
@@ -236,8 +266,8 @@ const ChatInterface: React.FC = () => {
     const nextMessages = [...messages, userMsg];
     setMessages(nextMessages);
 
-    const currentInput = input;
     const currentFiles = [...pendingFiles];
+    const currentInput = input.trim() || (currentFiles.length > 0 ? 'Analyze the attached documents and summarize key points.' : input);
     emitLearningSignal('high_engagement', {
       input_length: userMsg.content.length,
       attachments: currentFiles.length,
@@ -515,6 +545,67 @@ const ChatInterface: React.FC = () => {
 
         <footer className="flex-shrink-0 p-6 border-t bg-black/80 backdrop-blur-2xl border-white/5 z-20 min-h-[120px]">
             <div className="max-w-5xl mx-auto w-full">
+                {pendingFiles.length > 0 && (
+                  <div className="mb-4 space-y-3">
+                    <div className="text-[10px] uppercase tracking-widest text-gray-500 font-mono">
+                      Attached Documents ({pendingFiles.length})
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {pendingFiles.map((file, idx) => (
+                        <div
+                          key={`${file.name}-${idx}`}
+                          className={`flex items-center gap-2 rounded-xl px-3 py-2 border text-xs ${
+                            previewFileIndex === idx
+                              ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10 text-white'
+                              : 'border-white/10 bg-white/5 text-gray-300'
+                          }`}
+                        >
+                          <button
+                            onClick={() => setPreviewFileIndex(previewFileIndex === idx ? null : idx)}
+                            className="text-left leading-tight"
+                            title="Preview attachment"
+                          >
+                            <div className="font-semibold truncate max-w-[200px]">{file.name}</div>
+                            <div className="text-[10px] text-gray-500">{formatFileSize(file.size)}</div>
+                          </button>
+                          <button
+                            onClick={() => removeFile(idx)}
+                            className="text-gray-400 hover:text-red-400"
+                            title="Remove attachment"
+                          >
+                            <Icon name="x-circle" className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    {selectedPreviewFile && (
+                      <div className="rounded-xl border border-white/10 bg-black/40 p-3">
+                        <div className="text-[11px] uppercase tracking-widest text-gray-400 mb-2 font-mono">
+                          Preview: {selectedPreviewFile.name}
+                        </div>
+                        {selectedPreviewFile.extractedText ? (
+                          <pre className="max-h-44 overflow-auto whitespace-pre-wrap text-xs text-gray-300 leading-relaxed">
+                            {selectedPreviewFile.extractedText.slice(0, 2500)}
+                          </pre>
+                        ) : selectedPreviewFile.type.startsWith('image/') && selectedPreviewUrl ? (
+                          <img src={selectedPreviewUrl} alt={selectedPreviewFile.name} className="max-h-48 rounded-lg border border-white/10" />
+                        ) : selectedPreviewFile.type === 'application/pdf' && selectedPreviewUrl ? (
+                          <iframe
+                            src={selectedPreviewUrl}
+                            title={selectedPreviewFile.name}
+                            className="w-full h-56 rounded-lg border border-white/10 bg-white"
+                          />
+                        ) : (
+                          <div className="text-xs text-gray-400">
+                            Preview unavailable for this file type. The file will still be attached.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex items-end gap-4">
                 <div className="flex gap-2 mb-1">
                     <button 
