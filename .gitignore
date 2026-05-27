@@ -12,6 +12,16 @@ dist
 dist-ssr
 *.local
 
+# Python/runtime artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+flask_session/
+
+# Runtime state artifacts
+*.bin
+quadra-seer-intelligence.zip
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

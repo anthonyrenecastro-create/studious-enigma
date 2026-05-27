@@ -6,6 +6,7 @@
  */
 
 const ATLANTEAN_API_BASE = import.meta.env.VITE_ATLANTEAN_API_BASE || '/api/atlantean';
+const ATLANTEAN_HEALTH_URL = import.meta.env.VITE_ATLANTEAN_HEALTH_URL || '/health';
 const ATLANTEAN_SESSION_STORAGE_KEY = 'atlantean.session_id';
 
 function generateSessionId(): string {
@@ -575,7 +576,7 @@ export async function saveState(): Promise<{ success: boolean }> {
  */
 export async function checkHealth(): Promise<boolean> {
   try {
-    const response = await fetch('http://localhost:5001/health');
+    const response = await fetch(ATLANTEAN_HEALTH_URL);
     return response.ok;
   } catch {
     return false;

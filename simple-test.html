@@ -38,8 +38,8 @@
         <h2>Manual Tests</h2>
         <p>Try these URLs directly in your browser:</p>
         <ul>
-            <li><a href="http://localhost:5001/health" target="_blank">http://localhost:5001/health</a></li>
-            <li><a href="http://localhost:5001/api/atlantean/status" target="_blank">http://localhost:5001/api/atlantean/status</a></li>
+            <li><a id="health-link" href="#" target="_blank">/health</a></li>
+            <li><a id="status-link" href="#" target="_blank">/api/atlantean/status</a></li>
         </ul>
     </div>
 
@@ -61,8 +61,14 @@
         debug.textContent += `Hostname: ${window.location.hostname}\n`;
         debug.textContent += `Port: ${window.location.port}\n`;
         
-        // Try to connect to backend
-        const backendUrl = `${window.location.protocol}//${window.location.hostname}:5001`;
+        // Try to connect to backend.
+        // Use query param override (?backend=https://api.example.com), else same-origin.
+        const backendOverride = new URLSearchParams(window.location.search).get('backend');
+        const backendUrl = (backendOverride || window.location.origin).replace(/\/$/, '');
+        document.getElementById('health-link').href = `${backendUrl}/health`;
+        document.getElementById('health-link').textContent = `${backendUrl}/health`;
+        document.getElementById('status-link').href = `${backendUrl}/api/atlantean/status`;
+        document.getElementById('status-link').textContent = `${backendUrl}/api/atlantean/status`;
         debug.textContent += `\nBackend URL: ${backendUrl}/health\n`;
         
         fetch(`${backendUrl}/health`)

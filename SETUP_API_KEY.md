@@ -11,7 +11,7 @@
 Edit `.env.local`:
 
 ```bash
-GEMINI_API_KEY=YOUR_ACTUAL_API_KEY_HERE
+VITE_GEMINI_API_KEY=AIzaSyDkegTagNqyjotwwsXa7CwGgcesit72ll0
 ```
 
 Then restart the backend:
@@ -21,17 +21,18 @@ pkill -f "python.*atlantean_backend"
 python atlantean_backend.py
 ```
 
-## Or Use Temporary Key (For Testing)
+## Verify Backend Has Key
 
-You can also pass the API key directly in your first message by storing it in localStorage:
+Make sure the backend process has the key loaded:
 
-Open browser console (F12) and run:
+```bash
+# Check if key is set
+echo $GEMINI_API_KEY
 
-```javascript
-localStorage.setItem('gemini_api_key', 'YOUR_API_KEY');
+# Restart backend to pick up new key
+pkill -f "python.*atlantean_backend"
+python atlantean_backend.py
 ```
-
-Then refresh the page.
 
 ## Verify It's Working
 

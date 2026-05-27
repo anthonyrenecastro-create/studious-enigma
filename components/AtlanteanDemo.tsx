@@ -74,7 +74,7 @@ export const AtlanteanDemo: React.FC = () => {
           <p>Start the backend server:</p>
           <code style={styles.code}>python atlantean_backend.py</code>
           <p style={{ marginTop: '1rem', fontSize: '0.9rem' }}>
-            The backend should be running on http://localhost:5001
+            Ensure the frontend can reach your configured backend API endpoint.
           </p>
         </div>
       </div>

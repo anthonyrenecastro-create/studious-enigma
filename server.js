@@ -12,8 +12,27 @@ dotenv.config();
 const app = express();
 const port = 3001;
 
+// --- CORS Configuration ---
+// Restrict CORS to specific origins (development and production)
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173').split(',').map(o => o.trim());
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            callback(new Error(`CORS policy: Origin ${origin} not allowed`));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    maxAge: 3600 // Preflight cache duration in seconds
+};
+
 // --- Middleware ---
-app.use(cors()); // Allow requests from the frontend
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' })); // Allow larger payloads for file uploads
 
 // --- API Key and Service Initialization ---

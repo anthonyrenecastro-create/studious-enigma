@@ -44,7 +44,30 @@ else:
     print("⚠️  No Gemini API key found - using mock responses")
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for frontend
+SESSION_SECRET = os.getenv('ATLANTEAN_SESSION_SECRET') or os.getenv('SECRET_KEY') or 'dev-only-change-me'
+app.config['SECRET_KEY'] = SESSION_SECRET
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', '0') == '1'
+if SESSION_SECRET == 'dev-only-change-me':
+    print("⚠️  ATLANTEAN_SESSION_SECRET is not set; using development fallback secret")
+
+# --- CORS Configuration ---
+# Restrict CORS to specific origins (development and production)
+allowed_origins = os.getenv(
+    'ALLOWED_ORIGINS',
+    'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173'
+).split(',')
+allowed_origins = [o.strip() for o in allowed_origins]
+
+CORS(
+    app,
+    origins=allowed_origins,
+    allow_headers=['Content-Type', 'Authorization'],
+    methods=['GET', 'POST', 'OPTIONS'],
+    supports_credentials=True,
+    max_age=3600  # Preflight cache duration in seconds
+)
 
 # Try to connect to Redis, fallback to in-memory storage if unavailable
 try:
@@ -547,13 +570,25 @@ def get_bridge() -> 'AtlanteanQuadraBridge':
 
 
 def _resolve_session_id(explicit_session_id: str | None = None) -> str:
-    """Resolve a stable session id without assuming Flask-Session internals."""
-    if explicit_session_id:
-        return explicit_session_id
+    """Resolve a server-authoritative session id.
+
+    Client-provided session ids are ignored to prevent horizontal state access.
+    """
+    stable = session.get('atlantean_session_id')
+    if stable:
+        if explicit_session_id and explicit_session_id != stable:
+            print("⚠️  Ignoring client-provided session_id override")
+        return str(stable)
+
     sid = getattr(session, 'sid', None)
-    if sid:
-        return str(sid)
-    return 'default'
+    generated = str(sid) if sid else str(uuid.uuid4())
+    session['atlantean_session_id'] = generated
+    session.modified = True
+
+    if explicit_session_id and explicit_session_id != generated:
+        print("⚠️  Ignoring client-provided session_id override")
+
+    return generated
 
 
 def _index_phase_snapshot(
@@ -633,7 +668,7 @@ def _save_snapshot_records(session_id: str, records: List[Dict[str, Any]]) -> No
 @app.route('/api/atlantean/status', methods=['GET'])
 def status():
     """Get current intelligence status."""
-    session_id = request.args.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(request.args.get('session_id'))
     b = get_bridge_for_session(session_id)
     return jsonify(b.get_status())
 
@@ -654,7 +689,7 @@ def query():
     user_input = data.get('input', '')
     llm_provider = data.get('llm_provider', 'gemini')
     api_key = data.get('api_key') or GEMINI_API_KEY
-    session_id = data.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(data.get('session_id'))
     history = data.get('history', [])
     
     if not user_input:
@@ -973,7 +1008,7 @@ Current field stats:
 @app.route('/api/atlantean/fields', methods=['GET'])
 def get_fields():
     """Get field visualization data."""
-    session_id = _resolve_session_id(request.args.get('session_id'))
+    session_id = _resolve_session_id()
     b = get_bridge_for_session(session_id)
     return jsonify(b.get_field_visualization_data())
 
@@ -981,7 +1016,7 @@ def get_fields():
 @app.route('/api/atlantean/chat/history', methods=['GET'])
 def get_chat_history():
     """Get recent persisted chat turns for a session."""
-    session_id = _resolve_session_id(request.args.get('session_id'))
+    session_id = _resolve_session_id()
     limit = int(request.args.get('limit', 80))
     b = get_bridge_for_session(session_id)
     messages = b.list_chat_history(session_id=session_id, limit=limit)
@@ -1004,7 +1039,7 @@ def learning_event():
     }
     """
     data = request.json
-    session_id = data.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(data.get('session_id'))
     event = data.get('event')
     event_data = data.get('data', {})
     
@@ -1047,7 +1082,7 @@ def learning_event():
 def store_simulation():
     """Store simulation in cold memory."""
     data = request.json or {}
-    session_id = _resolve_session_id(data.get('session_id'))
+    session_id = _resolve_session_id()
     simulation = data.get('simulation')
     confidence = data.get('confidence', 0.5)
     
@@ -1078,7 +1113,7 @@ def store_simulation():
 def recall_simulations():
     """Recall past simulations."""
     data = request.json or {}
-    session_id = _resolve_session_id(data.get('session_id'))
+    session_id = _resolve_session_id()
     query = data.get('query', '')
     limit = data.get('limit', 10)
 
@@ -1091,7 +1126,7 @@ def recall_simulations():
 @app.route('/api/atlantean/simulation/list', methods=['GET'])
 def list_simulations():
     """List all stored simulations directly from Redis (no embedding needed)."""
-    session_id = _resolve_session_id(request.args.get('session_id'))
+    session_id = _resolve_session_id()
     limit = int(request.args.get('limit', 50))
     b = get_bridge_for_session(session_id)
     simulations = b.list_all_simulations(limit, session_id=session_id)
@@ -1101,7 +1136,7 @@ def list_simulations():
 @app.route('/api/atlantean/cold/manifests', methods=['GET'])
 def list_cold_manifests():
     """List detachable cold-memory manifests for a session."""
-    session_id = request.args.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(request.args.get('session_id'))
     include_detached = str(request.args.get('include_detached', 'false')).lower() == 'true'
     b = get_bridge_for_session(session_id)
     manifests = b.list_cold_manifests(include_detached=include_detached)
@@ -1111,7 +1146,7 @@ def list_cold_manifests():
 @app.route('/api/atlantean/cold/manifest/export', methods=['GET'])
 def export_cold_manifest():
     """Export a detachable cold-memory manifest."""
-    session_id = request.args.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(request.args.get('session_id'))
     manifest_id = request.args.get('manifest_id', 'default')
     b = get_bridge_for_session(session_id)
     exported = b.export_cold_manifest(manifest_id)
@@ -1122,7 +1157,7 @@ def export_cold_manifest():
 def import_cold_manifest():
     """Import a detached cold-memory manifest into a session."""
     data = request.json or {}
-    session_id = data.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(data.get('session_id'))
     manifest = data.get('manifest')
     if not manifest:
         return jsonify({'error': 'No manifest provided'}), 400
@@ -1136,7 +1171,7 @@ def import_cold_manifest():
 def tombstone_cold_item():
     """Tombstone a cold-memory item instead of hard deleting it."""
     data = request.json or {}
-    session_id = data.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(data.get('session_id'))
     item_id = data.get('item_id')
     reason = data.get('reason', 'manual')
     if not item_id:
@@ -1154,7 +1189,7 @@ def create_snapshot():
     """Create a labeled snapshot."""
     data = request.json or {}
     label = data.get('label')
-    session_id = data.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(data.get('session_id'))
     
     b = get_bridge_for_session(session_id)
     hrm = get_hrm_for_session(session_id)
@@ -1185,7 +1220,7 @@ def create_snapshot():
 @app.route('/api/atlantean/snapshots', methods=['GET'])
 def list_snapshots():
     """List indexed snapshots (phase-locked memory points) for a session."""
-    session_id = request.args.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(request.args.get('session_id'))
     limit = int(request.args.get('limit', 50))
     key = f'{SNAPSHOT_INDEX_PREFIX}{session_id}'
     rows = redis_client.lrange(key, 0, max(limit - 1, 0))
@@ -1201,7 +1236,7 @@ def list_snapshots():
 def restore_snapshot():
     """Restore hot-memory state from a previously indexed snapshot."""
     data = request.json or {}
-    session_id = _resolve_session_id(data.get('session_id'))
+    session_id = _resolve_session_id()
     snapshot_id = data.get('snapshot_id')
 
     if not snapshot_id:
@@ -1273,7 +1308,7 @@ def restore_snapshot():
 def delete_snapshot():
     """Delete a snapshot record from the archive index."""
     data = request.json or {}
-    session_id = _resolve_session_id(data.get('session_id'))
+    session_id = _resolve_session_id()
     snapshot_id = data.get('snapshot_id')
 
     if not snapshot_id:
@@ -1316,7 +1351,7 @@ def delete_snapshot():
 def create_checkpoint():
     """Create a signed checkpoint tied to the session event ledger."""
     data = request.json or {}
-    session_id = data.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(data.get('session_id'))
     label = data.get('label')
 
     b = get_bridge_for_session(session_id)
@@ -1334,7 +1369,7 @@ def create_checkpoint():
 @app.route('/api/atlantean/integrity/verify', methods=['GET'])
 def verify_integrity():
     """Verify the signed event/checkpoint chain for a session."""
-    session_id = request.args.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(request.args.get('session_id'))
     b = get_bridge_for_session(session_id)
     return jsonify(_verify_ledger_integrity(session_id, b))
 
@@ -1342,7 +1377,7 @@ def verify_integrity():
 @app.route('/api/atlantean/integrity/replay', methods=['GET'])
 def replay_integrity_proof():
     """Deterministic one-shot replay proof: event-log state hash vs current live state hash."""
-    session_id = _resolve_session_id(request.args.get('session_id'))
+    session_id = _resolve_session_id()
     b = get_bridge_for_session(session_id)
     return jsonify(_deterministic_replay_proof(session_id, b))
 
@@ -1350,7 +1385,7 @@ def replay_integrity_proof():
 @app.route('/api/atlantean/export', methods=['GET'])
 def export_intelligence_bundle():
     """Export signed events/checkpoints + current state for user-owned portability."""
-    session_id = request.args.get('session_id') or session.sid or 'default'
+    session_id = _resolve_session_id(request.args.get('session_id'))
     b = get_bridge_for_session(session_id)
     hrm = get_hrm_for_session(session_id)
 

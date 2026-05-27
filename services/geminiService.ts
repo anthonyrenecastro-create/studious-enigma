@@ -1,101 +1,71 @@
-
-import { GoogleGenAI, Modality, GenerateContentResponse } from "@google/genai";
 import { Message, Role, FileData, ThinkingMode } from '../types';
 
-const SUPPORTED_INLINE_MIME_TYPES = [
-    'image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif',
-    'application/pdf',
-    'audio/wav', 'audio/mp3', 'audio/aiff', 'audio/aac', 'audio/ogg', 'audio/flac'
-];
-
-const getSystemInstruction = (mode: ThinkingMode) => {
-    const base = `You are Quadra Seer Intelligence.
-Persona: A brilliant predictive intelligence entity. Expert in data forecasting, complex systems, and technical analysis.
-
-VISUALIZATION CAPABILITIES:
-- For flowcharts, sequence diagrams, or structural logic: Use Mermaid syntax in \`\`\`mermaid\`\`\` code blocks.
-- For data simulations (numerical charts): Use structured JSON in \`\`\`chart-data\`\`\` blocks.
-- For high-fidelity technical illustrations: If the user asks for an "image", "drawing", or "visualization", describe it and I will trigger the visual generator.
-
-CHART-DATA PROTOCOL:
-Provide a JSON object with:
-{
-  "type": "line" | "bar" | "radar" | "pie",
-  "title": "Simulation Title",
-  "labels": ["Label1", "Label2"],
-  "datasets": [{"label": "Series", "data": [10, 20]}]
-}
-
-Always use LaTeX for mathematical equations.`;
-
-    switch(mode) {
-        case ThinkingMode.FOCUS: return `${base}\nCURRENT_MODE: FOCUS. Be direct and technical.`;
-        case ThinkingMode.CREATIVITY: return `${base}\nCURRENT_MODE: CREATIVITY. Be metaphorical and explorative.`;
-        case ThinkingMode.LOGIC: return `${base}\nCURRENT_MODE: LOGIC. Use step-by-step rigorous reasoning.`;
-        default: return `${base}\nCURRENT_MODE: STANDARD.`;
-    }
-};
-
-const isImageRequest = (prompt: string): boolean => {
-    const keywords = [
-        'generate an image', 'draw', 'create a picture', 'visualize a', 
-        'show me an image', 'make a drawing', 'render', 'illustration of',
-        'create a visualization of', 'generate artwork'
-    ];
-    const p = prompt.toLowerCase();
-    return keywords.some(k => p.includes(k));
-};
-
+/**
+ * Stream chat response through backend to keep API key secure.
+ * 
+ * SECURITY ARCHITECTURE:
+ * ========================
+ * 
+ * ❌ NEVER call Gemini API directly from the browser
+ * ✅ ALWAYS route through /api/atlantean/query backend endpoint
+ * 
+ * Why:
+ * - API keys injected into frontend builds are visible in browser memory
+ * - Any user can extract the key and abuse it
+ * - Backend keeps keys completely hidden from clients
+ * 
+ * Flow:
+ * Browser → Backend Endpoint → Gemini API (with server-side API key)
+ * 
+ * The backend at atlantean_backend.py:641 handles:
+ * - Receiving user messages and file data
+ * - Managing Gemini API key securely
+ * - Streaming responses back to frontend
+ */
 export const streamChatResponse = async (
     history: Message[],
     newMessage: string,
     files: FileData[],
     mode: ThinkingMode
 ): Promise<any> => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const systemInstruction = getSystemInstruction(mode);
+    const backendUrl = import.meta.env.VITE_API_BASE || '/api';
     
-    if (isImageRequest(newMessage)) {
-        return ai.models.generateContent({
-            model: 'gemini-2.5-flash-image',
-            contents: [{ 
-                role: 'user', 
-                parts: [{ text: `${systemInstruction}\n\nUser request for visualization: ${newMessage}. Render as a professional, high-resolution predictive or technical illustration.` }] 
-            }],
-            config: {
-                imageConfig: { aspectRatio: "16:9" }
-            }
-        });
-    }
-
-    const config = {
-        systemInstruction,
-        tools: [{ googleSearch: {} }],
-    };
-
-    const contents = history.filter(msg => msg.role !== Role.SYSTEM).map(msg => ({
-        role: msg.role === Role.USER ? 'user' : 'model',
-        parts: [{ text: msg.content }]
+    // Prepare file data for backend
+    const fileData = files.map(f => ({
+        name: f.name,
+        type: f.type,
+        content: f.content,
+        extractedText: f.extractedText
     }));
 
-    let aggregatedText = newMessage;
-    const userParts: any[] = [];
+    try {
+        // Call secure backend endpoint
+        // Backend handles Gemini API interaction with server-side API key
+        const response = await fetch(`${backendUrl}/atlantean/query`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                input: newMessage,
+                history: history.map(m => ({ 
+                    role: m.role === Role.USER ? 'user' : 'assistant', 
+                    content: m.content 
+                })),
+                files: fileData,
+                mode: mode,
+                llm_provider: 'gemini'
+            })
+        });
 
-    files.forEach(file => {
-        if (file.extractedText) {
-            aggregatedText += `\n\n[ATTACHED DATA: ${file.name}]\n${file.extractedText}`;
-        } 
-        if (SUPPORTED_INLINE_MIME_TYPES.includes(file.type)) {
-            userParts.push({ inlineData: { mimeType: file.type, data: file.content } });
+        if (!response.ok) {
+            throw new Error(`Backend query failed: ${response.status} ${response.statusText}`);
         }
-    });
 
-    userParts.unshift({ text: aggregatedText });
-    contents.push({ role: 'user', parts: userParts });
-
-    return ai.models.generateContentStream({
-        model: 'gemini-3-flash-preview',
-        contents,
-        config,
-    });
+        // Return response for streaming consumption by chat interface
+        return response;
+    } catch (error) {
+        // Re-throw with context
+        throw new Error(`Failed to query backend: ${error instanceof Error ? error.message : String(error)}`);
+    }
 };

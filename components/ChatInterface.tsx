@@ -268,8 +268,13 @@ const ChatInterface: React.FC = () => {
             }
         }
     } catch (err: any) {
+        const message = err instanceof Error ? err.message : 'Request failed';
+        const isMissingKey = /missing gemini api key/i.test(message);
+        const userFacingError = isMissingKey
+          ? 'ERROR: Backend API not configured. Ensure GEMINI_API_KEY is set in .env.local and restart the backend server.'
+          : `ERROR: ${message}`;
         setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(1.0, 0)]);
-        setMessages(prev => prev.map(m => m.id === botId ? { ...m, content: "ERROR: Signal lost.", isStreaming: false } : m));
+        setMessages(prev => prev.map(m => m.id === botId ? { ...m, content: userFacingError, isStreaming: false } : m));
     } finally {
         setIsLoading(false);
         setMessages(prev => {

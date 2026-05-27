@@ -10,8 +10,9 @@ import requests
 import json
 import time
 import sys
+import os
 
-BASE_URL = "http://localhost:5001"
+BASE_URL = os.getenv("ATLANTEAN_BASE_URL", "http://127.0.0.1:5001")
 ATLANTEAN_API = f"{BASE_URL}/api/atlantean"
 
 def print_header(text):
