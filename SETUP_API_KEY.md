@@ -11,7 +11,7 @@
 Edit `.env.local`:
 
 ```bash
-VITE_GEMINI_API_KEY=AIzaSyDkegTagNqyjotwwsXa7CwGgcesit72ll0
+VITE_GEMINI_API_KEY=AIzaSyB4FFB96YQa_DFBEUV1TPny5tQcprlGmEg
 ```
 
 Then restart the backend:

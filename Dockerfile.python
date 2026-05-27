@@ -12,8 +12,10 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements first for better caching
 COPY requirements.txt ./
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (CPU-only torch to keep image size bounded)
+RUN grep -v '^torch==' requirements.txt > /tmp/requirements.no_torch.txt \
+    && pip install --no-cache-dir -r /tmp/requirements.no_torch.txt \
+    && pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.2.0
 
 # Copy source code
 COPY . .
