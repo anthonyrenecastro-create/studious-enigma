@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Message, Role, UserProfile, FileData, ThinkingMode, ChartConfig, Conversation } from '../types';
-import { streamChatResponse } from '../services/geminiService';
+import streamChatResponse from '../services/geminiService';
 import { loadConversation, saveConversation } from '../services/apiService';
 import { resetSimulation, runSimulationStep } from '../services/simulationService';
 import { parseFile } from '../utils/fileParser';
@@ -16,6 +16,7 @@ import { useSpeechToText } from '../hooks/useSpeechToText';
 import { useTextToSpeech, wakeAudioContext, getAudioState } from '../hooks/useTextToSpeech';
 import { useLiveSession } from '../hooks/useLiveSession';
 import { USER_PROFILE_KEY, CHAT_HISTORY_KEY } from '../constants';
+import { triggerLearningEvent } from '../services/atlanteanService';
 
 const ChatInterface: React.FC = () => {
   const [isReady, setIsReady] = useState(false);
@@ -180,6 +181,15 @@ const ChatInterface: React.FC = () => {
   const handleSendMessage = async () => {
     if (isLoading || (input.trim() === '' && pendingFiles.length === 0)) return;
 
+    const emitLearningSignal = (
+      event: 'high_engagement' | 'helpful_response' | 'unhelpful_response' | 'clarification_needed',
+      data: Record<string, any> = {}
+    ) => {
+      void triggerLearningEvent(event, data).catch((error) => {
+        console.warn(`Learning signal '${event}' failed:`, error);
+      });
+    };
+
     const userMsg: Message = {
       id: `u-${Date.now()}`,
       role: Role.USER,
@@ -193,6 +203,11 @@ const ChatInterface: React.FC = () => {
 
     const currentInput = input;
     const currentFiles = [...pendingFiles];
+    emitLearningSignal('high_engagement', {
+      input_length: userMsg.content.length,
+      attachments: currentFiles.length,
+    });
+
     setInput('');
     setPendingFiles([]);
     setIsLoading(true);
@@ -203,8 +218,26 @@ const ChatInterface: React.FC = () => {
 
     try {
         const result = await streamChatResponse(nextMessages, currentInput, currentFiles, thinkingMode);
-        
-        if (result && result.candidates) {
+        const responseText = typeof result?.response === 'string' ? result.response : '';
+
+        if (responseText) {
+            const finalBotMsg = {
+              content: responseText,
+              isStreaming: false,
+            };
+
+            emitLearningSignal('helpful_response', {
+              response_length: responseText.length,
+              mode: thinkingMode,
+            });
+
+            setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.2, 0.8)]);
+            setMessages(prev => {
+              const updated = prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
+              persistSession(updated, simulationHistory);
+              return updated;
+            });
+        } else if (result && result.candidates) {
             const candidate = result.candidates[0];
             const parts = candidate.content?.parts || [];
             let textOutput = "";
@@ -223,13 +256,21 @@ const ChatInterface: React.FC = () => {
               isStreaming: false 
             };
 
+            emitLearningSignal(
+              finalBotMsg.content.trim() ? 'helpful_response' : 'clarification_needed',
+              {
+                response_length: finalBotMsg.content.length,
+                mode: thinkingMode,
+              }
+            );
+
             setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.2, 0.8)]);
             setMessages(prev => {
               const updated = prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
               persistSession(updated, simulationHistory);
               return updated;
             });
-        } 
+        }
         else if (result && result[Symbol.asyncIterator]) {
             let fullText = '';
             let lastChunkTime = Date.now();
@@ -266,6 +307,14 @@ const ChatInterface: React.FC = () => {
                   }));
                 }
             }
+
+            emitLearningSignal(
+              fullText.trim() ? 'helpful_response' : 'clarification_needed',
+              {
+                response_length: fullText.length,
+                mode: thinkingMode,
+              }
+            );
         }
     } catch (err: any) {
         const message = err instanceof Error ? err.message : 'Request failed';
@@ -273,6 +322,10 @@ const ChatInterface: React.FC = () => {
         const userFacingError = isMissingKey
           ? 'ERROR: Backend API not configured. Ensure GEMINI_API_KEY is set in .env.local and restart the backend server.'
           : `ERROR: ${message}`;
+        emitLearningSignal('unhelpful_response', {
+          error: message,
+          mode: thinkingMode,
+        });
         setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(1.0, 0)]);
         setMessages(prev => prev.map(m => m.id === botId ? { ...m, content: userFacingError, isStreaming: false } : m));
     } finally {

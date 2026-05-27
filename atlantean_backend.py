@@ -18,6 +18,7 @@ import uuid
 import time
 import hashlib
 import json
+import re
 from importlib import import_module
 import redis
 import numpy as np
@@ -150,6 +151,50 @@ EVENT_HEAD_HASH_PREFIX = 'event_head_hash:'
 CHECKPOINT_INDEX_PREFIX = 'checkpoint_index:'
 CHECKPOINT_INTERVAL = 20
 SNAPSHOT_DATA_PREFIX = 'snapshot_data:'
+
+# Guardrail patterns for suppressing anthropomorphic/internal status claims in
+# user-facing model output and recalled assistant memory snippets.
+_INTERNAL_STATUS_PATTERNS = [
+    re.compile(r'\bexternal data streams?\b', re.IGNORECASE),
+    re.compile(r'\bcore predictive processing resources?\b', re.IGNORECASE),
+    re.compile(r'\binternal state\b', re.IGNORECASE),
+    re.compile(r'\bthis anomaly prevents me\b', re.IGNORECASE),
+    re.compile(r'\bpersistent disruption\b', re.IGNORECASE),
+    re.compile(r'\b(i am|i\'m)\s+(currently\s+)?(experiencing|having)\b.{0,90}\b(disruption|outage|anomaly)\b', re.IGNORECASE),
+]
+
+
+def _contains_internal_status_language(text: str) -> bool:
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _INTERNAL_STATUS_PATTERNS)
+
+
+def _sanitize_model_output(text: str, user_input: str) -> str:
+    """Remove internal-status disclaimers; keep useful content when present."""
+    if not text:
+        return text
+
+    cleaned_lines: List[str] = []
+    removed_any = False
+    for line in text.splitlines():
+        if _contains_internal_status_language(line):
+            removed_any = True
+            continue
+        cleaned_lines.append(line)
+
+    cleaned = "\n".join(cleaned_lines).strip()
+    if removed_any and len(cleaned) >= 40:
+        return cleaned
+
+    if _contains_internal_status_language(text) or not cleaned:
+        return (
+            "I can help with this directly. "
+            "Please share the exact question, data, or goal you want analyzed, "
+            "and I will provide a concrete answer."
+        )
+
+    return text
 
 
 def _canonical_json(data: Any) -> str:
@@ -719,7 +764,12 @@ def query():
     seen_facts = set()
     for fact in recalled_facts:
         norm = fact.strip().lower()
-        if not norm or norm == user_input_norm or norm in seen_facts:
+        if (
+            not norm
+            or norm == user_input_norm
+            or norm in seen_facts
+            or _contains_internal_status_language(fact)
+        ):
             continue
         seen_facts.add(norm)
         filtered_facts.append(fact)
@@ -774,7 +824,10 @@ Current HRM state: {hrm_context}
 
 You are a brilliant predictive intelligence entity, expert in data forecasting, complex systems, and technical analysis.
 
-Respond naturally and helpfully to the user's query. Your intelligence fields are evolving based on user interactions."""
+Respond naturally and helpfully to the user's query.
+Never claim internal outages, disruptions, anomalies, data-stream failures, or inaccessible processing resources.
+Never describe hidden internal system state.
+If details are missing, ask a concise clarifying question and provide the best actionable guidance you can."""
             
             history_lines = []
             for turn in history[-12:]:
@@ -797,6 +850,8 @@ Respond naturally and helpfully to the user's query. Your intelligence fields ar
                 # Strip legacy provenance/debug tails from older stored turns.
                 if '\n\n[Provenance]' in content:
                     content = content.split('\n\n[Provenance]', 1)[0].strip()
+                if _contains_internal_status_language(content):
+                    continue
                 if len(content) > 260:
                     content = content[:260] + '...'
                 memory_lines.append(f"[{mem_type} | session={source_session}] {content}")
@@ -813,14 +868,14 @@ Respond naturally and helpfully to the user's query. Your intelligence fields ar
                 f"Assistant:"
             )
             
-            # Generate response using a robust model fallback chain.
-            # Google model IDs evolve frequently; this avoids hard failures when one is retired.
+            # Generate response using a conservative model fallback chain.
+            # Avoid retired or unsupported model IDs so the UI does not surface
+            # model-not-found errors when Google deprecates older names.
             configured_model = os.getenv('GEMINI_MODEL') or os.getenv('ATLANTEAN_GEMINI_MODEL')
             candidate_models = [m for m in [
                 configured_model,
                 'gemini-2.5-flash',
                 'gemini-2.0-flash',
-                'gemini-1.5-flash',
             ] if m]
 
             last_model_error = None
@@ -837,8 +892,26 @@ Respond naturally and helpfully to the user's query. Your intelligence fields ar
                 except Exception as model_err:
                     last_model_error = model_err
 
-            if response_text is None and last_model_error:
-                raise last_model_error
+            if response_text is None:
+                if last_model_error:
+                    print(f"⚠️  Gemini model fallback exhausted: {last_model_error}")
+                generation_mode = 'mock'
+                response_text = f"""🧠 **Atlantean Intelligence Active**
+
+Intelligence State: {intelligence_context}
+
+Recalled Memory ({len(recalled_memories)}):
+{memory_section if 'memory_section' in locals() else '- No prior recalled memory'}
+
+Processing your query: \"{user_input}\"
+
+Gemini model selection failed, so a local fallback response was used.
+
+Current field stats:
+- Decision field (φ₁): {field_stats['phi1_mean']:.3f}
+- Learning field (φ₅): {field_stats['phi5_mean']:.3f}
+- Global coherence (Φ): {field_stats['Phi']:.3f}
+- Learning capacity: {learning_capacity:.1%}"""
             
         else:
             memory_snippets = []
@@ -917,6 +990,7 @@ Current field stats:
     # retrieval/generation traces into the user-visible assistant text.
     if not response_text:
         response_text = "I processed your request, but no response text was generated."
+    response_text = _sanitize_model_output(response_text, user_input)
 
     # Persist both sides of this interaction into cold memory.
     try:

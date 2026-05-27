@@ -1,4 +1,5 @@
 import { Message, Role, FileData, ThinkingMode } from '../types';
+import { getStableSessionId } from './atlanteanService';
 
 function resolveAtlanteanApiBase(): string {
     const configured =
@@ -38,7 +39,7 @@ function resolveAtlanteanApiBase(): string {
  * - Managing Gemini API key securely
  * - Streaming responses back to frontend
  */
-export const streamChatResponse = async (
+const streamChatResponse = async (
     history: Message[],
     newMessage: string,
     files: FileData[],
@@ -64,6 +65,7 @@ export const streamChatResponse = async (
             },
             body: JSON.stringify({
                 input: newMessage,
+                session_id: getStableSessionId(),
                 history: history.map(m => ({ 
                     role: m.role === Role.USER ? 'user' : 'assistant', 
                     content: m.content 
@@ -78,10 +80,14 @@ export const streamChatResponse = async (
             throw new Error(`Backend query failed: ${response.status} ${response.statusText}`);
         }
 
-        // Return response for streaming consumption by chat interface
-        return response;
+        // Return parsed JSON from the backend. The Atlantean endpoint responds with
+        // a structured payload containing the generated assistant text.
+        return response.json();
     } catch (error) {
         // Re-throw with context
         throw new Error(`Failed to query backend: ${error instanceof Error ? error.message : String(error)}`);
     }
 };
+
+export { streamChatResponse };
+export default streamChatResponse;
