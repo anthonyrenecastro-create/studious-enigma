@@ -21,6 +21,7 @@ import { triggerLearningEvent } from '../services/atlanteanService';
 const ChatInterface: React.FC = () => {
   const [isReady, setIsReady] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [feedbackSent, setFeedbackSent] = useState<Record<string, 'positive' | 'negative' | 'correction'>>({});
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isFileParsing, setIsFileParsing] = useState(false);
@@ -177,6 +178,40 @@ const ChatInterface: React.FC = () => {
         });
     }
   }, [messages, isLoading, isReady, interimInput]);
+
+  const handleMessageFeedback = useCallback(async (
+    messageId: string,
+    feedback: 'positive' | 'negative' | 'correction'
+  ) => {
+    if (feedbackSent[messageId]) {
+      return;
+    }
+
+    const eventMap = {
+      positive: 'user_positive_feedback',
+      negative: 'user_negative_feedback',
+      correction: 'user_correction',
+    } as const;
+
+    const strengthMap = {
+      positive: 0.8,
+      negative: 0.6,
+      correction: 0.7,
+    } as const;
+
+    try {
+      await triggerLearningEvent(eventMap[feedback], {
+        message_id: messageId,
+        feedback,
+        strength: strengthMap[feedback],
+        timestamp: Date.now(),
+        mode: thinkingMode,
+      });
+      setFeedbackSent(prev => ({ ...prev, [messageId]: feedback }));
+    } catch (error) {
+      console.warn(`Feedback learning signal '${feedback}' failed:`, error);
+    }
+  }, [feedbackSent, thinkingMode]);
 
   const handleSendMessage = async () => {
     if (isLoading || (input.trim() === '' && pendingFiles.length === 0)) return;
@@ -424,7 +459,54 @@ const ChatInterface: React.FC = () => {
             )}
 
             {messages.map((msg) => (
-                <ChatMessage key={msg.id} message={msg} userAvatar={userProfile.avatar} onSpeak={speak} isCurrentSpeaking={isSpeaking} />
+              <React.Fragment key={msg.id}>
+                <ChatMessage
+                  message={msg}
+                  userAvatar={userProfile.avatar}
+                  onSpeak={speak}
+                  isCurrentSpeaking={isSpeaking}
+                />
+                {msg.role === Role.BOT && !msg.isStreaming && (
+                  <div className="max-w-4xl w-full mx-auto -mt-4 mb-2 pl-14 flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => handleMessageFeedback(msg.id, 'positive')}
+                      disabled={!!feedbackSent[msg.id]}
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all border ${
+                        feedbackSent[msg.id] === 'positive'
+                          ? 'bg-[var(--color-primary)] text-black border-[var(--color-primary)]'
+                          : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10 hover:text-white'
+                      } disabled:opacity-60 disabled:cursor-not-allowed`}
+                      title="This response was helpful"
+                    >
+                      Helpful
+                    </button>
+                    <button
+                      onClick={() => handleMessageFeedback(msg.id, 'negative')}
+                      disabled={!!feedbackSent[msg.id]}
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all border ${
+                        feedbackSent[msg.id] === 'negative'
+                          ? 'bg-red-500/80 text-white border-red-400'
+                          : 'bg-white/5 text-gray-300 border-white/10 hover:bg-red-500/20 hover:text-red-300 hover:border-red-400/50'
+                      } disabled:opacity-60 disabled:cursor-not-allowed`}
+                      title="This response was not helpful"
+                    >
+                      Not Quite
+                    </button>
+                    <button
+                      onClick={() => handleMessageFeedback(msg.id, 'correction')}
+                      disabled={!!feedbackSent[msg.id]}
+                      className={`px-3 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all border ${
+                        feedbackSent[msg.id] === 'correction'
+                          ? 'bg-amber-500/80 text-black border-amber-400'
+                          : 'bg-white/5 text-gray-300 border-white/10 hover:bg-amber-500/20 hover:text-amber-300 hover:border-amber-400/50'
+                      } disabled:opacity-60 disabled:cursor-not-allowed`}
+                      title="I want to correct this response"
+                    >
+                      Correct
+                    </button>
+                  </div>
+                )}
+              </React.Fragment>
             ))}
             {isLoading && <div className="flex justify-center py-4"><TypingIndicator /></div>}
             <div ref={chatEndRef} className="h-4 w-full flex-shrink-0" />

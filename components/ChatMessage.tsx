@@ -155,6 +155,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, userAvatar, onSpeak,
                     <canvas ref={chartCanvasRef}></canvas>
                   </div>
                 )}
+
             </div>
         </div>
     );
