@@ -82,6 +82,19 @@ class AtlanteanIdentity:
             return True
         except Exception:
             return False
+
+    def sign_cognition_lineage(self, lineage_hash: str) -> str:
+        """Sign a cognitive-lineage hash and return a hex signature."""
+        signature = self.sign(str(lineage_hash).encode("utf-8"))
+        return signature.hex()
+
+    def verify_cognition_lineage(self, lineage_hash: str, signature_hex: str) -> bool:
+        """Verify a cognitive-lineage signature from a hex-encoded signature."""
+        try:
+            signature = bytes.fromhex(signature_hex)
+        except Exception:
+            return False
+        return self.verify(str(lineage_hash).encode("utf-8"), signature)
     
     def fingerprint(self) -> str:
         """

@@ -100,7 +100,16 @@ class AtlanteanSyncEngine:
             "phi5": hot_memory.phi5.tolist(),
             "Phi": hot_memory.Phi.tolist(),
             "Theta": hot_memory.Theta,
-            "schema_version": hot_memory.schema_version
+            "schema_version": hot_memory.schema_version,
+            "identity_fingerprint": hot_memory.identity_fingerprint,
+            "device_id": hot_memory.device_id,
+            "version": hot_memory.version,
+            "timestamp": hot_memory.last_update,
+            "cognitive_signature": hot_memory.cognitive_signature,
+            "cognitive_signature_prev": hot_memory.cognitive_signature_prev,
+            "lineage_depth": hot_memory.lineage_depth,
+            "lineage_event": hot_memory.lineage_event,
+            "lineage_signature_hex": hot_memory.lineage_signature_hex,
         }
         
         # Sign the state
@@ -241,7 +250,16 @@ class AtlanteanSyncEngine:
             phi5=merged_phi5,
             Phi=merged_Phi,
             Theta=merged_Theta,
-            schema_version=max(local_memory.schema_version, remote_state["schema_version"])
+            schema_version=max(local_memory.schema_version, remote_state["schema_version"]),
+            identity_fingerprint=local_memory.identity_fingerprint or remote_state.get("identity_fingerprint"),
+            device_id=local_memory.device_id or remote_state.get("device_id"),
+            version=max(int(local_memory.version), int(remote_state.get("version", 0))),
+            last_update=max(float(local_memory.last_update), float(remote_state.get("timestamp", 0.0) or 0.0)),
+            cognitive_signature=remote_state.get("cognitive_signature", local_memory.cognitive_signature),
+            cognitive_signature_prev=remote_state.get("cognitive_signature_prev", local_memory.cognitive_signature_prev),
+            lineage_depth=max(int(local_memory.lineage_depth), int(remote_state.get("lineage_depth", 0))),
+            lineage_event=f"merge_{strategy.value}",
+            lineage_signature_hex=remote_state.get("lineage_signature_hex", local_memory.lineage_signature_hex),
         )
     
     def _apply_remote(self, remote_state):
@@ -252,7 +270,16 @@ class AtlanteanSyncEngine:
             phi5=torch.tensor(remote_state["phi5"]),
             Phi=torch.tensor(remote_state["Phi"]),
             Theta=remote_state["Theta"],
-            schema_version=remote_state["schema_version"]
+            schema_version=remote_state["schema_version"],
+            identity_fingerprint=remote_state.get("identity_fingerprint"),
+            device_id=remote_state.get("device_id"),
+            version=int(remote_state.get("version", 0)),
+            last_update=float(remote_state.get("timestamp", 0.0) or 0.0),
+            cognitive_signature=remote_state.get("cognitive_signature", ""),
+            cognitive_signature_prev=remote_state.get("cognitive_signature_prev", ""),
+            lineage_depth=int(remote_state.get("lineage_depth", 0)),
+            lineage_event=remote_state.get("lineage_event", "sync_apply_remote"),
+            lineage_signature_hex=remote_state.get("lineage_signature_hex"),
         )
     
     def verify_package(self, package, identity):
