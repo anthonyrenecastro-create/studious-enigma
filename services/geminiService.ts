@@ -1,5 +1,21 @@
 import { Message, Role, FileData, ThinkingMode } from '../types';
 
+function resolveAtlanteanApiBase(): string {
+    const configured =
+        import.meta.env.VITE_ATLANTEAN_API_BASE ||
+        import.meta.env.VITE_API_BASE ||
+        '/api/atlantean';
+
+    const base = String(configured).replace(/\/$/, '');
+    if (base.endsWith('/api/atlantean')) {
+        return base;
+    }
+    if (base.endsWith('/api')) {
+        return `${base}/atlantean`;
+    }
+    return base;
+}
+
 /**
  * Stream chat response through backend to keep API key secure.
  * 
@@ -28,7 +44,7 @@ export const streamChatResponse = async (
     files: FileData[],
     mode: ThinkingMode
 ): Promise<any> => {
-    const backendUrl = import.meta.env.VITE_API_BASE || '/api';
+    const atlanteanApiBase = resolveAtlanteanApiBase();
     
     // Prepare file data for backend
     const fileData = files.map(f => ({
@@ -41,7 +57,7 @@ export const streamChatResponse = async (
     try {
         // Call secure backend endpoint
         // Backend handles Gemini API interaction with server-side API key
-        const response = await fetch(`${backendUrl}/atlantean/query`, {
+        const response = await fetch(`${atlanteanApiBase}/query`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

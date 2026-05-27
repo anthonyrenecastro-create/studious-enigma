@@ -34,6 +34,12 @@ PY_BACKEND_URL="http://127.0.0.1:${PY_BACKEND_PORT}"
 HEALTH_URL="${PY_BACKEND_URL}/health"
 START_NODE_API="${START_NODE_API:-1}"
 
+if [[ -x ".venv/bin/python3" ]]; then
+    PYTHON_BIN=".venv/bin/python3"
+else
+    PYTHON_BIN="python3"
+fi
+
 PY_BACKEND_PID=""
 NODE_API_PID=""
 
@@ -75,7 +81,7 @@ fi
 
 echo ""
 echo "🐍 Starting Atlantean backend on port ${PY_BACKEND_PORT}..."
-python3 atlantean_backend.py &
+"${PYTHON_BIN}" atlantean_backend.py &
 PY_BACKEND_PID=$!
 
 echo "⏳ Waiting for backend health at ${HEALTH_URL} ..."

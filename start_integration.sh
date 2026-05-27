@@ -35,9 +35,15 @@ echo "  Phase 1: Foundation"
 echo "=================================================="
 echo ""
 
+if [[ -x ".venv/bin/python3" ]]; then
+    PYTHON_BIN=".venv/bin/python3"
+else
+    PYTHON_BIN="python3"
+fi
+
 # Check if Python dependencies are installed
 echo "📦 Checking Python dependencies..."
-python3 -c "import torch, flask, flask_cors" 2>/dev/null
+"${PYTHON_BIN}" -c "import torch, flask, flask_cors" 2>/dev/null
 if [ $? -ne 0 ]; then
     echo "⚠️  Installing Python dependencies..."
     pip install torch numpy scikit-learn cryptography flask flask-cors -q
@@ -52,7 +58,7 @@ fi
 
 echo ""
 echo "🚀 Starting Atlantean Backend on port 5001..."
-python3 atlantean_backend.py &
+"${PYTHON_BIN}" atlantean_backend.py &
 BACKEND_PID=$!
 
 # Wait for backend to start
