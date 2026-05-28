@@ -1,6 +1,6 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { textToSpeechStream } from '../services/ttsService';
+import { textToSpeechStream, prepareSpeechText } from '../services/ttsService';
 import { decodeAudio, decodeAudioData, wakeAudioContext, getSharedAudioContext } from '../utils/audioUtils';
 
 // Update to use the shared AudioContext state from utils
@@ -24,6 +24,8 @@ export const useTextToSpeech = () => {
 
   const speak = useCallback(async (text: string) => {
     if (!text || text.trim().length === 0) return;
+    const speechText = prepareSpeechText(text);
+    if (!speechText) return;
     cancel();
 
     try {
@@ -31,11 +33,11 @@ export const useTextToSpeech = () => {
         const ctx = await wakeAudioContext();
         setIsSpeaking(true);
         
-        const base64Data = await textToSpeechStream(text);
+        const base64Data = await textToSpeechStream(speechText);
         
         if (!base64Data) {
             // Fallback to browser TTS if Gemini generation fails
-            const utterance = new SpeechSynthesisUtterance(text);
+          const utterance = new SpeechSynthesisUtterance(speechText);
             utterance.onstart = () => setIsSpeaking(true);
             utterance.onend = () => setIsSpeaking(false);
             window.speechSynthesis.speak(utterance);

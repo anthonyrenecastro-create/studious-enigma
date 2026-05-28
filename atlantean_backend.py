@@ -29,8 +29,10 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv('.env.local')
+# Load environment variables.
+# In Docker Compose, GEMINI_* may be injected as empty strings; override ensures
+# .env.local values are used when present.
+load_dotenv('.env.local', override=True)
 
 # Import the bridge module
 from atlantean_quadra_bridge import AtlanteanQuadraBridge, QuadraLearningEvent
