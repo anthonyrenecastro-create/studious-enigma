@@ -2,8 +2,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { decodeAudio, decodeAudioData, createBlob } from '../utils/audioUtils';
+import { DEFAULT_TTS_VOICE, TtsVoice } from '../services/ttsService';
 
-export const useLiveSession = () => {
+export const useLiveSession = (voiceName: TtsVoice = DEFAULT_TTS_VOICE) => {
   const [isActive, setIsActive] = useState(false);
   const [isModelSpeaking, setIsModelSpeaking] = useState(false);
   const [volume, setVolume] = useState(0);
@@ -53,7 +54,9 @@ export const useLiveSession = () => {
     if (isActive) return;
     try {
       console.debug("[Live] Initializing session...");
-      const apiKey = process.env.API_KEY;
+      const apiKey =
+        (import.meta as any).env?.VITE_GEMINI_API_KEY ||
+        (process as any)?.env?.API_KEY;
       if (!apiKey) throw new Error("API_KEY environment variable is missing.");
       
       const ai = new GoogleGenAI({ apiKey });
@@ -136,7 +139,7 @@ export const useLiveSession = () => {
           responseModalities: [Modality.AUDIO],
           speechConfig: { 
             voiceConfig: { 
-              prebuiltVoiceConfig: { voiceName: 'Zephyr' } 
+              prebuiltVoiceConfig: { voiceName } 
             } 
           },
           systemInstruction: 'You are Quadra Seer Intelligence. A helpful predictive AI. Be concise and professional.',
@@ -148,7 +151,7 @@ export const useLiveSession = () => {
       console.error("[Live] Initialization failed:", err);
       stop(); 
     }
-  }, [isActive, stop]);
+  }, [isActive, stop, voiceName]);
 
   useEffect(() => {
     let frame: number;

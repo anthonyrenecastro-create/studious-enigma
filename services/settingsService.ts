@@ -1,8 +1,11 @@
 export type LlmProvider = 'gemini' | 'openai' | 'edenai' | 'mock';
 
+import { DEFAULT_TTS_VOICE, GEMINI_TTS_VOICES, TtsVoice } from './ttsService';
+
 export interface AppSettings {
   llmProvider: LlmProvider;
   apiKeys: Partial<Record<LlmProvider, string>>;
+  ttsVoice: TtsVoice;
 }
 
 const SETTINGS_STORAGE_KEY = 'qmai.settings';
@@ -10,6 +13,7 @@ const SETTINGS_STORAGE_KEY = 'qmai.settings';
 const defaultSettings: AppSettings = {
   llmProvider: 'gemini',
   apiKeys: {},
+  ttsVoice: DEFAULT_TTS_VOICE,
 };
 
 export function getSettings(): AppSettings {
@@ -20,6 +24,9 @@ export function getSettings(): AppSettings {
     return {
       llmProvider: (parsed.llmProvider as LlmProvider) || defaultSettings.llmProvider,
       apiKeys: parsed.apiKeys || {},
+      ttsVoice: GEMINI_TTS_VOICES.includes(parsed.ttsVoice as TtsVoice)
+        ? (parsed.ttsVoice as TtsVoice)
+        : defaultSettings.ttsVoice,
     };
   } catch {
     return { ...defaultSettings };
@@ -71,4 +78,14 @@ export function setProviderApiKey(provider: LlmProvider, apiKey: string): void {
     ...settings,
     apiKeys: nextKeys,
   });
+}
+
+export function getTtsVoice(): TtsVoice {
+  return getSettings().ttsVoice;
+}
+
+export function setTtsVoice(voice: TtsVoice): void {
+  const settings = getSettings();
+  settings.ttsVoice = GEMINI_TTS_VOICES.includes(voice) ? voice : DEFAULT_TTS_VOICE;
+  saveSettings(settings);
 }

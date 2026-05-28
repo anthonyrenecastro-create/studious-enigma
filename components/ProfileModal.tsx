@@ -3,17 +3,31 @@ import React, { useState, useEffect } from 'react';
 import { UserProfile } from '../types';
 import Icon from './Icon';
 import { useTheme } from '../context/ThemeContext';
+import { GEMINI_TTS_VOICES, TtsVoice } from '../services/ttsService';
 
 interface ProfileModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (profile: UserProfile) => void;
   currentProfile: UserProfile;
+  currentVoice: TtsVoice;
+  onVoiceChange: (voice: TtsVoice) => void;
+  onPreviewVoice: (voice: TtsVoice) => void;
+  isPreviewingVoice?: boolean;
 }
 
 const AVATARS = ['👤', '👩‍🚀', '🧑‍💻', '🕵️', '👽', '🤖', '🧠', '✨'];
 
-const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onSave, currentProfile }) => {
+const ProfileModal: React.FC<ProfileModalProps> = ({
+  isOpen,
+  onClose,
+  onSave,
+  currentProfile,
+  currentVoice,
+  onVoiceChange,
+  onPreviewVoice,
+  isPreviewingVoice = false,
+}) => {
   const [profile, setProfile] = useState(currentProfile);
   const { theme, saveCustomTheme } = useTheme();
 
@@ -135,6 +149,42 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onSave, cu
                         className="w-10 h-10 p-1 bg-transparent border-none rounded-md cursor-pointer"
                     />
                  </div>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold mb-3" style={{ color: 'var(--color-primary)' }}>Voice</h3>
+            <div className="space-y-4 pl-2 border-l-2" style={{ borderColor: 'var(--color-border)' }}>
+              <div>
+                <label htmlFor="tts-voice" className="block text-sm font-medium mb-1" style={{ color: 'var(--color-primary)' }}>
+                  Assistant Voice
+                </label>
+                <select
+                  id="tts-voice"
+                  value={currentVoice}
+                  onChange={e => onVoiceChange(e.target.value as TtsVoice)}
+                  className="w-full p-2 bg-gray-800/50 border rounded-md focus:outline-none focus:ring-2"
+                  style={{ borderColor: 'var(--color-border)', '--tw-ring-color': 'var(--color-accent)' } as any}
+                >
+                  {GEMINI_TTS_VOICES.map(voice => (
+                    <option key={voice} value={voice}>
+                      {voice}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={() => onPreviewVoice(currentVoice)}
+                disabled={isPreviewingVoice}
+                className="px-3 py-2 text-xs font-semibold rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                style={{
+                  borderColor: 'var(--color-border-accent)',
+                  color: 'var(--color-text-primary)',
+                  backgroundColor: 'rgba(255,255,255,0.04)',
+                }}
+              >
+                {isPreviewingVoice ? 'Previewing...' : 'Preview Voice'}
+              </button>
             </div>
           </div>
         </div>

@@ -1,5 +1,17 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 
+export const GEMINI_TTS_VOICES = [
+    'Zephyr',
+    'Puck',
+    'Charon',
+    'Kore',
+    'Fenrir',
+] as const;
+
+export type TtsVoice = typeof GEMINI_TTS_VOICES[number];
+
+export const DEFAULT_TTS_VOICE: TtsVoice = 'Zephyr';
+
 export const prepareSpeechText = (text: string): string => {
     if (!text) return '';
 
@@ -108,14 +120,20 @@ export const prepareSpeechText = (text: string): string => {
 /**
  * Fetches audio data for the given text using Gemini native TTS.
  * @param text The text to convert to speech.
+ * @param voiceName Optional voice override for Gemini native TTS.
  * @returns Base64 string of PCM audio data.
  */
-export const textToSpeechStream = async (text: string): Promise<string | null> => {
+export const textToSpeechStream = async (
+    text: string,
+    voiceName: TtsVoice = DEFAULT_TTS_VOICE,
+): Promise<string | null> => {
     try {
         const speechText = prepareSpeechText(text);
         if (!speechText) return null;
 
-        const apiKey = process.env.API_KEY;
+        const apiKey =
+            (import.meta as any).env?.VITE_GEMINI_API_KEY ||
+            (process as any)?.env?.API_KEY;
         if (!apiKey) throw new Error("API_KEY is not defined");
         
         const ai = new GoogleGenAI({ apiKey });
@@ -129,7 +147,7 @@ export const textToSpeechStream = async (text: string): Promise<string | null> =
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
                     voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: 'Zephyr' },
+                        prebuiltVoiceConfig: { voiceName },
                     },
                 },
             },

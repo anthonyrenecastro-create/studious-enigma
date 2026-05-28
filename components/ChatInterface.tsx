@@ -17,6 +17,8 @@ import { useTextToSpeech, wakeAudioContext, getAudioState } from '../hooks/useTe
 import { useLiveSession } from '../hooks/useLiveSession';
 import { USER_PROFILE_KEY, CHAT_HISTORY_KEY } from '../constants';
 import { triggerLearningEvent } from '../services/atlanteanService';
+import { getTtsVoice, setTtsVoice } from '../services/settingsService';
+import { TtsVoice } from '../services/ttsService';
 
 const ChatInterface: React.FC = () => {
   const [isReady, setIsReady] = useState(false);
@@ -32,6 +34,7 @@ const ChatInterface: React.FC = () => {
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>(ThinkingMode.STANDARD);
   const [audioState, setAudioState] = useState(getAudioState());
   const [sidebarTab, setSidebarTab] = useState<'telemetry' | 'archives'>('telemetry');
+  const [ttsVoice, setTtsVoiceState] = useState<TtsVoice>(getTtsVoice());
   
   const [convoId, setConvoId] = useState<string>('');
   const [convoCreatedAt, setConvoCreatedAt] = useState<number>(Date.now());
@@ -54,7 +57,7 @@ const ChatInterface: React.FC = () => {
   const onInterimTranscript = useCallback((transcript: string) => setInterimInput(transcript), []);
   
   const { isListening, startListening: baseStartListening, stopListening } = useSpeechToText(onFinalTranscript, onInterimTranscript);
-  const { start: baseStartLive, stop: stopLive, isActive: isLiveActive, isModelSpeaking, volume } = useLiveSession();
+  const { start: baseStartLive, stop: stopLive, isActive: isLiveActive, isModelSpeaking, volume } = useLiveSession(ttsVoice);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -71,6 +74,16 @@ const ChatInterface: React.FC = () => {
   const startListening = async () => {
     await syncAudio();
     baseStartListening();
+  };
+
+  const handleVoiceChange = (voice: TtsVoice) => {
+    setTtsVoiceState(voice);
+    setTtsVoice(voice);
+  };
+
+  const handlePreviewVoice = async (voice: TtsVoice) => {
+    await syncAudio();
+    await speak('Voice preview ready. Quadra Seer link is calibrated and online.', voice);
   };
 
   const handleFileClick = () => {
@@ -493,7 +506,7 @@ const ChatInterface: React.FC = () => {
                 <ChatMessage
                   message={msg}
                   userAvatar={userProfile.avatar}
-                  onSpeak={speak}
+                  onSpeak={(text) => speak(text, ttsVoice)}
                   isCurrentSpeaking={isSpeaking}
                 />
                 {msg.role === Role.BOT && !msg.isStreaming && (
@@ -652,7 +665,20 @@ const ChatInterface: React.FC = () => {
             </div>
         </footer>
       </div>
-      <ProfileModal isOpen={isProfileModalOpen} onClose={() => setProfileModalOpen(false)} onSave={(p) => {setUserProfile(p); localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(p)); setProfileModalOpen(false);}} currentProfile={userProfile} />
+      <ProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setProfileModalOpen(false)}
+        onSave={(p) => {
+          setUserProfile(p);
+          localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(p));
+          setProfileModalOpen(false);
+        }}
+        currentProfile={userProfile}
+        currentVoice={ttsVoice}
+        onVoiceChange={handleVoiceChange}
+        onPreviewVoice={handlePreviewVoice}
+        isPreviewingVoice={isSpeaking}
+      />
     </div>
   );
 };
