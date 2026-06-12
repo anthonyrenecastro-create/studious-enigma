@@ -69,8 +69,16 @@ const streamChatResponse = async (
         // a structured payload containing the generated assistant text.
         return response.json();
     } catch (error) {
-        // Re-throw with context
-        throw new Error(`Failed to query backend: ${error instanceof Error ? error.message : String(error)}`);
+        const baseMessage = error instanceof Error ? error.message : String(error);
+        // Network failures often surface as "Failed to fetch" in browsers.
+        // Include endpoint and likely causes to speed up production debugging.
+        if (baseMessage.includes('Failed to fetch')) {
+            throw new Error(
+                `Failed to query backend at ${queryEndpoint}: Failed to fetch. Check backend reachability, HTTPS certificate, and CORS ALLOWED_ORIGINS.`
+            );
+        }
+
+        throw new Error(`Failed to query backend at ${queryEndpoint}: ${baseMessage}`);
     }
 };
 
