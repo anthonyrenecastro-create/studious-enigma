@@ -6,14 +6,50 @@
  */
 
 function normalizeAtlanteanApiBase(raw: string): string {
-  const base = String(raw).trim().replace(/\/$/, '');
-  if (base.endsWith('/api/atlantean')) {
+  const trimmed = String(raw).trim();
+
+  // Relative paths used during local development.
+  if (trimmed.startsWith('/')) {
+    const base = trimmed.replace(/\/$/, '');
+    if (base.endsWith('/api/atlantean')) {
+      return base;
+    }
+    if (base.endsWith('/api')) {
+      return `${base}/atlantean`;
+    }
+    if (base === '' || base === '/') {
+      return '/api/atlantean';
+    }
     return base;
   }
-  if (base.endsWith('/api')) {
-    return `${base}/atlantean`;
+
+  // Absolute backend URLs used in production.
+  try {
+    const url = new URL(trimmed);
+    const pathname = (url.pathname || '/').replace(/\/$/, '');
+    if (pathname.endsWith('/api/atlantean')) {
+      return url.toString().replace(/\/$/, '');
+    }
+    if (pathname.endsWith('/api')) {
+      url.pathname = `${pathname}/atlantean`;
+      return url.toString().replace(/\/$/, '');
+    }
+    if (pathname === '' || pathname === '/') {
+      url.pathname = '/api/atlantean';
+      return url.toString().replace(/\/$/, '');
+    }
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    // Fallback: non-URL strings keep existing behavior with slash normalization.
+    const base = trimmed.replace(/\/$/, '');
+    if (base.endsWith('/api/atlantean')) {
+      return base;
+    }
+    if (base.endsWith('/api')) {
+      return `${base}/atlantean`;
+    }
+    return base;
   }
-  return base;
 }
 
 export function resolveAtlanteanApiBaseOrThrow(): string {

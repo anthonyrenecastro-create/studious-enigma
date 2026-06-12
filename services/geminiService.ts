@@ -30,6 +30,7 @@ const streamChatResponse = async (
     mode: ThinkingMode
 ): Promise<any> => {
     const atlanteanApiBase = resolveAtlanteanApiBaseOrThrow();
+    const queryEndpoint = `${atlanteanApiBase}/query`;
     
     // Prepare file data for backend
     const fileData = files.map(f => ({
@@ -42,7 +43,7 @@ const streamChatResponse = async (
     try {
         // Call secure backend endpoint
         // Backend handles Gemini API interaction with server-side API key
-        const response = await fetch(`${atlanteanApiBase}/query`, {
+        const response = await fetch(queryEndpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -61,7 +62,7 @@ const streamChatResponse = async (
         });
 
         if (!response.ok) {
-            throw new Error(`Backend query failed: ${response.status} ${response.statusText}`);
+            throw new Error(`Backend query failed: ${response.status} ${response.statusText} (${queryEndpoint})`);
         }
 
         // Return parsed JSON from the backend. The Atlantean endpoint responds with
