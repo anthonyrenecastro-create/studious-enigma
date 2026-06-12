@@ -53,6 +53,11 @@ vercel env add VITE_ATLANTEAN_HEALTH_URL production
 
 Then redeploy so Vite build-time env vars are applied.
 
+Important:
+- In production builds, this app now requires `VITE_ATLANTEAN_API_BASE` to be set.
+- There is no silent fallback to same-origin `/api/atlantean` in production.
+- This prevents accidental calls to missing/broken Vercel serverless functions, which commonly surface as `500 FUNCTION_INVOCATION_FAILED`.
+
 ## Backend CORS allowlist
 
 Your backend must allow Vercel origins via `ALLOWED_ORIGINS`.
@@ -67,6 +72,15 @@ Notes:
 - Add your stable Production domain (`*.vercel.app` or custom domain).
 - For Preview, prefer a stable branch URL if available.
 - If preview URLs are fully ephemeral in your setup, you will need to keep `ALLOWED_ORIGINS` updated.
+
+## Troubleshooting `500 FUNCTION_INVOCATION_FAILED`
+
+If Vercel shows `500: INTERNAL_SERVER_ERROR` with `FUNCTION_INVOCATION_FAILED`:
+
+1. Confirm `VITE_ATLANTEAN_API_BASE` is set for both `Preview` and `Production` in Vercel.
+2. Confirm the value points to your deployed backend, for example `https://api.example.com/api/atlantean`.
+3. Redeploy after changing env vars (Vite reads them at build time).
+4. Verify backend CORS includes your Vercel origin in `ALLOWED_ORIGINS`.
 
 ## Aurora table setup for AWS persistence
 

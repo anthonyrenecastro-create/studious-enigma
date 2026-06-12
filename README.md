@@ -68,6 +68,7 @@ After deploy, the frontend is served by Vercel and all Atlantean API traffic goe
 
 - `vercel.json` includes SPA fallback routing to `index.html`.
 - If you later move your backend into Vercel serverless functions, update the two `VITE_...` variables to same-origin paths.
+- If you see `500 FUNCTION_INVOCATION_FAILED` on Vercel, verify `VITE_ATLANTEAN_API_BASE` is set for both Preview and Production and redeploy.
 
 ## Validation And Benchmarks
 

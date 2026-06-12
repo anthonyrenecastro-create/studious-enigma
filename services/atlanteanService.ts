@@ -5,8 +5,51 @@
  * This replaces traditional state management with field-based intelligence.
  */
 
-const ATLANTEAN_API_BASE = import.meta.env.VITE_ATLANTEAN_API_BASE || '/api/atlantean';
-const ATLANTEAN_HEALTH_URL = import.meta.env.VITE_ATLANTEAN_HEALTH_URL || '/health';
+function normalizeAtlanteanApiBase(raw: string): string {
+  const base = String(raw).trim().replace(/\/$/, '');
+  if (base.endsWith('/api/atlantean')) {
+    return base;
+  }
+  if (base.endsWith('/api')) {
+    return `${base}/atlantean`;
+  }
+  return base;
+}
+
+export function resolveAtlanteanApiBaseOrThrow(): string {
+  const configured =
+    import.meta.env.VITE_ATLANTEAN_API_BASE ||
+    import.meta.env.VITE_API_BASE;
+
+  if (configured && String(configured).trim()) {
+    return normalizeAtlanteanApiBase(String(configured));
+  }
+
+  if (!import.meta.env.PROD) {
+    return '/api/atlantean';
+  }
+
+  throw new Error(
+    'Missing VITE_ATLANTEAN_API_BASE in production. Set it to your backend URL, for example: https://api.example.com/api/atlantean'
+  );
+}
+
+function resolveAtlanteanHealthUrlOrThrow(): string {
+  const configured = import.meta.env.VITE_ATLANTEAN_HEALTH_URL;
+  if (configured && String(configured).trim()) {
+    return String(configured).trim().replace(/\/$/, '');
+  }
+
+  if (!import.meta.env.PROD) {
+    return '/health';
+  }
+
+  const apiBase = resolveAtlanteanApiBaseOrThrow();
+  return apiBase.replace(/\/api\/atlantean$/, '/health');
+}
+
+const ATLANTEAN_API_BASE = resolveAtlanteanApiBaseOrThrow();
+const ATLANTEAN_HEALTH_URL = resolveAtlanteanHealthUrlOrThrow();
 const ATLANTEAN_SESSION_STORAGE_KEY = 'atlantean.session_id';
 
 function generateSessionId(): string {

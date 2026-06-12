@@ -1,15 +1,13 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { Suspense, useEffect, useRef, useState } from 'react';
 import { Message, Role } from '../types';
 import Icon from './Icon';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
 import Chart from 'chart.js/auto';
 
 // Global mermaid variable from script tag
 declare const mermaid: any;
+
+const MarkdownRenderer = React.lazy(() => import('./MarkdownRenderer'));
 
 const MermaidDiagram: React.FC<{ chart: string }> = ({ chart }) => {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -118,7 +116,9 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message, userAvatar, onSpeak,
                 <div className="flex items-start justify-between min-h-[1.5rem]">
                     <div className="flex-1">
                       {safeContent ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>{safeContent}</ReactMarkdown>
+                        <Suspense fallback={<div className="whitespace-pre-wrap">{safeContent}</div>}>
+                          <MarkdownRenderer content={safeContent} />
+                        </Suspense>
                       ) : (
                         !message.imageGenerated && !message.chartData && !message.mermaidData && !message.isStreaming && (
                           <span className="text-gray-600 italic text-[10px] uppercase tracking-widest">[Processing_Complete]</span>

@@ -4,7 +4,6 @@ import { Message, Role, UserProfile, FileData, ThinkingMode, ChartConfig, Conver
 import streamChatResponse from '../services/geminiService';
 import { loadConversation, saveConversation } from '../services/apiService';
 import { resetSimulation, runSimulationStep } from '../services/simulationService';
-import { parseFile } from '../utils/fileParser';
 import ChatMessage from './ChatMessage';
 import TypingIndicator from './TypingIndicator';
 import Icon from './Icon';
@@ -96,6 +95,7 @@ const ChatInterface: React.FC = () => {
 
     setIsFileParsing(true);
     const newPendingFiles: FileData[] = [...pendingFiles];
+    const { parseFile } = await import('../utils/fileParser');
 
     for (let i = 0; i < selectedFiles.length; i++) {
         try {

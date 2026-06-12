@@ -1,21 +1,5 @@
 import { Message, Role, FileData, ThinkingMode } from '../types';
-import { getStableSessionId } from './atlanteanService';
-
-function resolveAtlanteanApiBase(): string {
-    const configured =
-        import.meta.env.VITE_ATLANTEAN_API_BASE ||
-        import.meta.env.VITE_API_BASE ||
-        '/api/atlantean';
-
-    const base = String(configured).replace(/\/$/, '');
-    if (base.endsWith('/api/atlantean')) {
-        return base;
-    }
-    if (base.endsWith('/api')) {
-        return `${base}/atlantean`;
-    }
-    return base;
-}
+import { getStableSessionId, resolveAtlanteanApiBaseOrThrow } from './atlanteanService';
 
 /**
  * Stream chat response through backend to keep API key secure.
@@ -45,7 +29,7 @@ const streamChatResponse = async (
     files: FileData[],
     mode: ThinkingMode
 ): Promise<any> => {
-    const atlanteanApiBase = resolveAtlanteanApiBase();
+    const atlanteanApiBase = resolveAtlanteanApiBaseOrThrow();
     
     // Prepare file data for backend
     const fileData = files.map(f => ({

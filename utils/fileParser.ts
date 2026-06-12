@@ -1,7 +1,5 @@
 
 import { FileData } from '../types';
-import mammoth from 'mammoth';
-import * as XLSX from 'xlsx';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 const MAX_EXTRACTED_TEXT = 12000;
@@ -132,6 +130,7 @@ export const parseFile = async (file: File): Promise<FileData> => {
 
     // Handle Word Documents
     if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || extension === 'docx') {
+        const mammoth = (await import('mammoth')).default;
         const arrayBuffer = await file.arrayBuffer();
         const result = await mammoth.extractRawText({ arrayBuffer });
         fileData.extractedText = truncateText(result.value);
@@ -139,6 +138,7 @@ export const parseFile = async (file: File): Promise<FileData> => {
     } 
     // Handle Excel Sheets
     else if (file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || extension === 'xlsx' || extension === 'xls' || extension === 'csv') {
+        const XLSX = await import('xlsx');
         const arrayBuffer = await file.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer);
         let combinedText = '';
