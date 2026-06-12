@@ -10,3 +10,4 @@ redis==5.0.1
 scikit-learn==1.4.0
 flask-session==0.8.0
 cryptography==44.0.1
+boto3==1.38.46
