@@ -23,17 +23,10 @@ function normalizeAtlanteanApiBase(raw: string): string {
     return base;
   }
 
-  // Absolute backend URLs used in production.
+  // Absolute URLs are normalized but remain optional for local-first usage.
   try {
     const url = new URL(trimmed);
     const pathname = (url.pathname || '/').replace(/\/$/, '');
-
-    // Guard against common misconfiguration: Fly dashboard URL instead of app domain.
-    if (url.hostname === 'fly.io' && pathname.startsWith('/apps/')) {
-      throw new Error(
-        'Invalid VITE_ATLANTEAN_API_BASE: fly.io/apps/... is the dashboard URL, not your API host. Use https://<app-name>.fly.dev/api/atlantean'
-      );
-    }
 
     if (pathname.endsWith('/api/atlantean')) {
       return url.toString().replace(/\/$/, '');
@@ -61,35 +54,15 @@ function normalizeAtlanteanApiBase(raw: string): string {
 }
 
 export function resolveAtlanteanApiBaseOrThrow(): string {
-  const configured =
-    import.meta.env.VITE_ATLANTEAN_API_BASE ||
-    import.meta.env.VITE_API_BASE;
-
+  const configured = import.meta.env.VITE_API_BASE;
   if (configured && String(configured).trim()) {
     return normalizeAtlanteanApiBase(String(configured));
   }
-
-  if (!import.meta.env.PROD) {
-    return '/api/atlantean';
-  }
-
-  throw new Error(
-    'Missing VITE_ATLANTEAN_API_BASE in production. Set it to your backend URL, for example: https://api.example.com/api/atlantean'
-  );
+  return '/api/atlantean';
 }
 
 function resolveAtlanteanHealthUrlOrThrow(): string {
-  const configured = import.meta.env.VITE_ATLANTEAN_HEALTH_URL;
-  if (configured && String(configured).trim()) {
-    return String(configured).trim().replace(/\/$/, '');
-  }
-
-  if (!import.meta.env.PROD) {
-    return '/health';
-  }
-
-  const apiBase = resolveAtlanteanApiBaseOrThrow();
-  return apiBase.replace(/\/api\/atlantean$/, '/health');
+  return '/health';
 }
 
 function getAtlanteanApiBase(): string {

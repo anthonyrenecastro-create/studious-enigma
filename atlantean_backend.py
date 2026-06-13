@@ -29,11 +29,6 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
-try:
-    from atlantean_core.aws_persistence import build_aws_persistence
-except Exception:
-    build_aws_persistence = None
-
 # Load environment variables.
 # In Docker Compose, GEMINI_* may be injected as empty strings; override ensures
 # .env.local values are used when present.
@@ -159,10 +154,6 @@ EVENT_HEAD_HASH_PREFIX = 'event_head_hash:'
 CHECKPOINT_INDEX_PREFIX = 'checkpoint_index:'
 CHECKPOINT_INTERVAL = 20
 SNAPSHOT_DATA_PREFIX = 'snapshot_data:'
-
-aws_persistence = build_aws_persistence() if build_aws_persistence else None
-if aws_persistence:
-    print("✅ AWS persistence enabled (DynamoDB/Aurora)")
 
 # Guardrail patterns for suppressing anthropomorphic/internal status claims in
 # user-facing model output and recalled assistant memory snippets.
@@ -304,8 +295,6 @@ def _append_signed_event(
     }
     redis_client.rpush(f'{EVENT_LOG_KEY_PREFIX}{session_id}', _canonical_json(event))
     redis_client.set(f'{EVENT_HEAD_HASH_PREFIX}{session_id}', event_hash)
-    if aws_persistence:
-        aws_persistence.persist_event(session_id, event)
 
     if seq % CHECKPOINT_INTERVAL == 0:
         _create_signed_checkpoint(
@@ -361,8 +350,6 @@ def _create_signed_checkpoint(
     }
     redis_client.lpush(f'{CHECKPOINT_INDEX_PREFIX}{session_id}', _canonical_json(checkpoint))
     redis_client.ltrim(f'{CHECKPOINT_INDEX_PREFIX}{session_id}', 0, 199)
-    if aws_persistence:
-        aws_persistence.persist_checkpoint(session_id, checkpoint)
     return checkpoint
 
 
@@ -682,8 +669,6 @@ def _index_phase_snapshot(
         redis_client.set(snapshot_data_key, json.dumps(snapshot))
         redis_client.lpush(key, json.dumps(snapshot_record))
         redis_client.ltrim(key, 0, 199)
-        if aws_persistence:
-            aws_persistence.persist_snapshot_record(session_id, snapshot_record)
     except Exception as e:
         print(f"⚠️  Failed to index snapshot for {session_id}: {e}")
 
