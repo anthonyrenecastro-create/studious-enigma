@@ -27,6 +27,14 @@ function normalizeAtlanteanApiBase(raw: string): string {
   try {
     const url = new URL(trimmed);
     const pathname = (url.pathname || '/').replace(/\/$/, '');
+
+    // Guard against common misconfiguration: Fly dashboard URL instead of app domain.
+    if (url.hostname === 'fly.io' && pathname.startsWith('/apps/')) {
+      throw new Error(
+        'Invalid VITE_ATLANTEAN_API_BASE: fly.io/apps/... is the dashboard URL, not your API host. Use https://<app-name>.fly.dev/api/atlantean'
+      );
+    }
+
     if (pathname.endsWith('/api/atlantean')) {
       return url.toString().replace(/\/$/, '');
     }

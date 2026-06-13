@@ -1687,9 +1687,10 @@ if __name__ == '__main__':
     
     # Initialize on startup (loads from Redis if available)
     get_bridge()
-    
+
+    port = int(os.getenv('PORT', 5001))
     app.run(
         host='0.0.0.0',
-        port=5001,
+        port=port,
         debug=False
     )
