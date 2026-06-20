@@ -32,3 +32,5 @@ quadra-seer-intelligence.zip
 *.njsproj
 *.sln
 *.sw?
+.env.local
+.env*.local

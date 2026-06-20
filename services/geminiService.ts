@@ -51,10 +51,8 @@ const streamChatResponse = async (
             body: JSON.stringify({
                 input: newMessage,
                 session_id: getStableSessionId(),
-                history: history.map(m => ({ 
-                    role: m.role === Role.USER ? 'user' : 'assistant', 
-                    content: m.content 
-                })),
+                // history is NOT sent — the backend reconstructs context from
+                // Atlantean cold memory (stateless-LLM principle).
                 files: fileData,
                 mode: mode,
                 llm_provider: 'gemini'

@@ -51,7 +51,7 @@ app.get('/', (_req, res) => {
     res.json({
         status: 'ok',
         service: 'Q.M.A.I. backend',
-        message: 'Use POST /api/chat, POST /api/tts, and POST /api/summarize.'
+        message: 'Primary route: POST /api/atlantean/query (Python backend). Legacy: POST /api/chat (deprecated). Utilities: POST /api/tts, POST /api/summarize.'
     });
 });
 
@@ -63,9 +63,15 @@ app.get('/health', (_req, res) => {
 // --- API Endpoints ---
 
 /**
- * Endpoint for streaming chat responses from Gemini.
+ * LEGACY FALLBACK — use POST /api/atlantean/query (Python backend) instead.
+ * This endpoint passes conversation history directly to Gemini without going
+ * through the Atlantean memory/field system, violating the stateless-LLM
+ * principle. Kept for backward compatibility only.
  */
 app.post('/api/chat', async (req, res) => {
+    res.setHeader('Deprecation', 'true');
+    res.setHeader('Link', '</api/atlantean/query>; rel="successor-version"');
+    console.warn('[DEPRECATED] /api/chat called — migrate callers to /api/atlantean/query');
     try {
         const { history, newMessage, files, mode } = req.body;
 

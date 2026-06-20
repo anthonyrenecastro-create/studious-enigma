@@ -737,7 +737,8 @@ def query():
     llm_provider = data.get('llm_provider', 'gemini')
     api_key = data.get('api_key') or GEMINI_API_KEY
     session_id = _resolve_session_id(data.get('session_id'))
-    history = data.get('history', [])
+    # history sent by legacy clients is accepted but ignored; context is
+    # reconstructed server-side from Atlantean cold memory (see below).
     files = data.get('files', [])
 
     normalized_files = []
@@ -869,8 +870,11 @@ If details are missing, ask a concise clarifying question and provide the best a
 If an "Attached files" section is provided below, treat those file excerpts as available context from the user.
 Do not ask the user to upload the same document again unless every attachment is marked as binary/no extracted text."""
             
+            # Reconstruct recent conversation context from Atlantean cold memory
+            # (server-side source of truth — clients must not pass raw history).
+            recent_turns = b.list_chat_history(session_id=session_id, limit=12)
             history_lines = []
-            for turn in history[-12:]:
+            for turn in recent_turns:
                 role = str(turn.get('role', '')).lower()
                 content = str(turn.get('content', '')).strip()
                 if not content:

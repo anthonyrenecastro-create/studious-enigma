@@ -232,7 +232,9 @@ export async function query(
   input: string,
   llmProvider: 'gemini' | 'edenai' | 'mock' = 'gemini',
   apiKey?: string,
-  history: Array<{ role: string; content: string }> = [],
+  // history parameter kept for API compatibility but is no longer forwarded —
+  // the backend reconstructs context from Atlantean cold memory server-side.
+  _history: Array<{ role: string; content: string }> = [],
   sessionId?: string
 ): Promise<QueryResponse> {
   const sid = resolveSessionId(sessionId);
@@ -246,9 +248,7 @@ export async function query(
     body.api_key = apiKey;
   }
 
-  if (history.length > 0) {
-    body.history = history;
-  }
+  // history is intentionally NOT forwarded to the backend.
 
   const response = await fetch(`${getAtlanteanApiBase()}/query`, {
     method: 'POST',
