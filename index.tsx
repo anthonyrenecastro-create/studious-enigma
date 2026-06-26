@@ -2,6 +2,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import './index.css';
 
 if (import.meta.env.DEV && 'serviceWorker' in navigator) {
   // Prevent stale SW caches from masking local UI changes.

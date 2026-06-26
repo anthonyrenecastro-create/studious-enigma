@@ -138,6 +138,7 @@ export const AtlanteanDemo: React.FC = () => {
         <div style={styles.queryForm}>
           <input
             type="text"
+            name="phase1-query"
             value={userInput}
             onChange={(e) => setUserInput(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleQuery()}

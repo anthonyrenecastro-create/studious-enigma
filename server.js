@@ -1,4 +1,7 @@
 
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -11,6 +14,14 @@ dotenv.config();
 
 const app = express();
 const port = 3001;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distDir = path.resolve(__dirname, 'dist');
+
+// Serve built frontend assets when available.
+if (fs.existsSync(distDir)) {
+    app.use(express.static(distDir));
+}
 
 // --- CORS Configuration ---
 // Restrict CORS to specific origins (development and production)
@@ -45,18 +56,53 @@ const ai = new GoogleGenAI({ apiKey: geminiApiKey });
 const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
 const edenAiApiKey = process.env.EDEN_AI_API_KEY;
 
+const pythonBackendUrl = (process.env.PYTHON_BACKEND_URL || 'http://127.0.0.1:5001').replace(/\/$/, '');
+
+const proxyToPythonBackend = async (req, res) => {
+    const targetUrl = new URL(req.originalUrl, pythonBackendUrl).toString();
+    const headers = { ...req.headers };
+    delete headers.host;
+
+    let body = undefined;
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        body = JSON.stringify(req.body || {});
+    }
+
+    try {
+        const upstreamResponse = await fetch(targetUrl, {
+            method: req.method,
+            headers,
+            body,
+        });
+
+        upstreamResponse.headers.forEach((value, name) => {
+            if (name.toLowerCase() === 'transfer-encoding') return;
+            res.setHeader(name, value);
+        });
+        res.status(upstreamResponse.status);
+
+        const responseBuffer = await upstreamResponse.arrayBuffer();
+        res.send(Buffer.from(responseBuffer));
+    } catch (err) {
+        console.error(`Proxy failure to Python backend at ${pythonBackendUrl}:`, err);
+        res.status(502).json({
+            error: 'Unable to reach Python backend server.',
+            backend: pythonBackendUrl,
+            details: err instanceof Error ? err.message : String(err),
+        });
+    }
+};
 
 // --- Basic Routes ---
+app.get('/health', proxyToPythonBackend);
+app.use('/api/atlantean', proxyToPythonBackend);
+
 app.get('/', (_req, res) => {
     res.json({
         status: 'ok',
         service: 'Q.M.A.I. backend',
         message: 'Primary route: POST /api/atlantean/query (Python backend). Legacy: POST /api/chat (deprecated). Utilities: POST /api/tts, POST /api/summarize.'
     });
-});
-
-app.get('/health', (_req, res) => {
-    res.json({ status: 'ok' });
 });
 
 
@@ -205,6 +251,15 @@ app.post('/api/summarize', async (req, res) => {
     }
 });
 
+
+// --- Catch-all frontend route for client-side routing ---
+app.get('*', (req, res) => {
+    if (fs.existsSync(path.join(distDir, 'index.html'))) {
+        res.sendFile(path.join(distDir, 'index.html'));
+    } else {
+        res.status(404).send('Frontend build not found. Run npm run build first.');
+    }
+});
 
 // --- Server Start ---
 app.listen(port, () => {

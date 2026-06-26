@@ -73,6 +73,7 @@ const HeatmapPanel: React.FC<HeatmapPanelProps> = ({ currentSessionId }) => {
               <span className="text-[8px] font-mono uppercase tracking-widest text-gray-500">Size</span>
               <input
                 type="range"
+                name="heatmap-size"
                 min={MIN_HEATMAP_HEIGHT}
                 max={MAX_HEATMAP_HEIGHT}
                 step={4}

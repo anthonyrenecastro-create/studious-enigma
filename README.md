@@ -26,6 +26,14 @@ flowchart LR
    B -->|LLM inference requests| D
 ```
 
+## ChatGPT-style Integration Hub
+
+This repository now includes a scaffolded backend integration hub with:
+- `GET /api/atlantean/integrations` to list available ChatGPT-style capabilities
+- `POST /api/atlantean/integrations/run` to invoke a registered integration
+
+See `CHATGPT_INTEGRATIONS_BLUEPRINT.md` for the current implementation status, what is scaffolded, and the prioritized order for production hardening.
+
 ## Run Locally
 
 **Prerequisites:**  Node.js

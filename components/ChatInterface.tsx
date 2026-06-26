@@ -1,26 +1,24 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Message, Role, UserProfile, FileData, ThinkingMode, ChartConfig, Conversation } from '../types';
-import streamChatResponse from '../services/geminiService';
-import { loadConversation, saveConversation } from '../services/apiService';
+import { Message, Role, UserProfile, FileData, ThinkingMode, ChartConfig } from '../types';
 import { resetSimulation, runSimulationStep } from '../services/simulationService';
 import ChatMessage from './ChatMessage';
 import TypingIndicator from './TypingIndicator';
 import Icon from './Icon';
 import SimulationVisualizer from './SimulationVisualizer';
-import NeuralArchives from './NeuralArchives';
+import IntegrationHubPanel from './IntegrationHubPanel';
 import ProfileModal from './ProfileModal';
 import VoiceModeOverlay from './VoiceModeOverlay';
 import { useSpeechToText } from '../hooks/useSpeechToText';
 import { useTextToSpeech, wakeAudioContext, getAudioState } from '../hooks/useTextToSpeech';
 import { useLiveSession } from '../hooks/useLiveSession';
-import { USER_PROFILE_KEY, CHAT_HISTORY_KEY } from '../constants';
-import { triggerLearningEvent } from '../services/atlanteanService';
+import { USER_PROFILE_KEY } from '../constants';
+import { useAtlantean } from '../hooks/useAtlantean';
+import { runIntegration } from '../services/integrationService';
 import { getTtsVoice, setTtsVoice } from '../services/settingsService';
 import { TtsVoice } from '../services/ttsService';
 
 const ChatInterface: React.FC = () => {
-  const [isReady, setIsReady] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [feedbackSent, setFeedbackSent] = useState<Record<string, 'positive' | 'negative' | 'correction'>>({});
   const [input, setInput] = useState('');
@@ -32,12 +30,9 @@ const ChatInterface: React.FC = () => {
   const [isProfileModalOpen, setProfileModalOpen] = useState(false);
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>(ThinkingMode.STANDARD);
   const [audioState, setAudioState] = useState(getAudioState());
-  const [sidebarTab, setSidebarTab] = useState<'telemetry' | 'archives'>('telemetry');
   const [ttsVoice, setTtsVoiceState] = useState<TtsVoice>(getTtsVoice());
+  const { query, triggerEvent, status, isHealthy, isLoading: atlanteanLoading, error: atlanteanError } = useAtlantean();
   
-  const [convoId, setConvoId] = useState<string>('');
-  const [convoCreatedAt, setConvoCreatedAt] = useState<number>(Date.now());
-
   const [userProfile, setUserProfile] = useState<UserProfile>({
     username: 'Operator',
     avatar: '👤',
@@ -56,7 +51,8 @@ const ChatInterface: React.FC = () => {
   const onInterimTranscript = useCallback((transcript: string) => setInterimInput(transcript), []);
   
   const { isListening, startListening: baseStartListening, stopListening } = useSpeechToText(onFinalTranscript, onInterimTranscript);
-  const { start: baseStartLive, stop: stopLive, isActive: isLiveActive, isModelSpeaking, volume } = useLiveSession(ttsVoice);
+  const { start: baseStartLive, stop: baseStopLive, isActive: isLiveActive, isModelSpeaking, volume } = useLiveSession(ttsVoice);
+  const liveSessionStartRef = useRef<number | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -65,10 +61,24 @@ const ChatInterface: React.FC = () => {
       setAudioState(state.state);
   };
 
-  const startLive = async () => {
+  const startLive = useCallback(async () => {
     await syncAudio();
-    baseStartLive();
-  };
+    await baseStartLive();
+    liveSessionStartRef.current = Date.now();
+    void triggerEvent('high_engagement', {
+      channel: 'voice',
+      mode: thinkingMode,
+    });
+  }, [baseStartLive, syncAudio, triggerEvent, thinkingMode]);
+
+  const stopLive = useCallback(async () => {
+    await baseStopLive();
+    if (liveSessionStartRef.current) {
+      const durationMs = Date.now() - liveSessionStartRef.current;
+      liveSessionStartRef.current = null;
+      void triggerEvent('voice_session_end', { duration_ms: durationMs, mode: thinkingMode });
+    }
+  }, [baseStopLive, triggerEvent, thinkingMode]);
 
   const startListening = async () => {
     await syncAudio();
@@ -145,82 +155,28 @@ const ChatInterface: React.FC = () => {
     ? `data:${selectedPreviewFile.type || 'application/octet-stream'};base64,${selectedPreviewFile.content}`
     : null;
 
-  const persistSession = useCallback(async (currentMessages: Message[], currentSim: any[]) => {
-    if (!convoId) return;
-    try {
-      const session: Conversation = {
-        id: convoId,
-        messages: currentMessages,
-        summary: currentMessages.length > 0 ? currentMessages[currentMessages.length-1].content.slice(0, 100) : "Intelligence session active.",
-        simulationHistory: currentSim,
-        createdAt: convoCreatedAt,
-        isPublic: false
-      };
-      await saveConversation(session);
-      localStorage.setItem(CHAT_HISTORY_KEY, convoId);
-    } catch (e) {
-      console.error("Persistence failure:", e);
-    }
-  }, [convoId, convoCreatedAt]);
-
-  const loadSession = async (id?: string) => {
-    setIsReady(false);
-    try {
-      resetSimulation();
-      const convo = await loadConversation(id);
-      setMessages(convo.messages || []);
-      if (convo.simulationHistory && convo.simulationHistory.length > 0) {
-          setSimulationHistory(convo.simulationHistory);
-      } else {
-          const seedHistory = Array.from({ length: 30 }, () => runSimulationStep(0.05, 0));
-          setSimulationHistory(seedHistory);
-      }
-      setConvoId(convo.id);
-      setConvoCreatedAt(convo.createdAt || Date.now());
-    } catch (e) {
-      console.error("Session load failure:", e);
-    } finally {
-      setIsReady(true);
-    }
-  };
-
-  const startNewSession = async () => {
-    localStorage.removeItem(CHAT_HISTORY_KEY);
-    await loadSession();
-  };
-
   useEffect(() => {
-    const initData = async () => {
-      try {
-        const storedProfile = localStorage.getItem(USER_PROFILE_KEY);
-        if (storedProfile) {
-          try { setUserProfile(JSON.parse(storedProfile)); } catch (e) {}
-        }
-        await loadSession();
-      } catch (error) {
-        console.error("[System] Boot failure:", error);
-      } finally {
-        setIsReady(true);
-      }
-    };
-    initData();
+    const storedProfile = localStorage.getItem(USER_PROFILE_KEY);
+    if (storedProfile) {
+      try { setUserProfile(JSON.parse(storedProfile)); } catch (e) {}
+    }
   }, []);
 
   useEffect(() => {
-    if (!isReady || isLoading) return;
+    if (atlanteanLoading || isLoading) return;
     const interval = setInterval(() => {
         setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.05, 0)]);
     }, 4000);
     return () => clearInterval(interval);
-  }, [isReady, isLoading]);
+  }, [atlanteanLoading, isLoading]);
 
   useEffect(() => {
-    if (isReady && chatEndRef.current) {
+    if (chatEndRef.current) {
         requestAnimationFrame(() => {
             chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         });
     }
-  }, [messages, isLoading, isReady, interimInput]);
+  }, [messages, isLoading, interimInput]);
 
   const handleMessageFeedback = useCallback(async (
     messageId: string,
@@ -243,7 +199,7 @@ const ChatInterface: React.FC = () => {
     } as const;
 
     try {
-      await triggerLearningEvent(eventMap[feedback], {
+      await triggerEvent(eventMap[feedback], {
         message_id: messageId,
         feedback,
         strength: strengthMap[feedback],
@@ -254,7 +210,7 @@ const ChatInterface: React.FC = () => {
     } catch (error) {
       console.warn(`Feedback learning signal '${feedback}' failed:`, error);
     }
-  }, [feedbackSent, thinkingMode]);
+  }, [feedbackSent, thinkingMode, triggerEvent]);
 
   const handleSendMessage = async () => {
     if (isLoading || (input.trim() === '' && pendingFiles.length === 0)) return;
@@ -263,7 +219,7 @@ const ChatInterface: React.FC = () => {
       event: 'high_engagement' | 'helpful_response' | 'unhelpful_response' | 'clarification_needed',
       data: Record<string, any> = {}
     ) => {
-      void triggerLearningEvent(event, data).catch((error) => {
+      void triggerEvent(event, data).catch((error) => {
         console.warn(`Learning signal '${event}' failed:`, error);
       });
     };
@@ -295,128 +251,73 @@ const ChatInterface: React.FC = () => {
     setMessages(prev => [...prev, { id: botId, role: Role.BOT, content: '', isStreaming: true }]);
 
     try {
-        const result = await streamChatResponse(nextMessages, currentInput, currentFiles, thinkingMode);
-        const responseText = typeof result?.response === 'string' ? result.response : '';
+      let responseText: string;
 
-        if (responseText) {
-            const finalBotMsg = {
-              content: responseText,
-              isStreaming: false,
-            };
+      if (currentFiles.length > 0) {
+        const integrationResponse = await runIntegration('file_analysis', {
+          prompt: currentInput,
+          files: currentFiles.map(file => ({
+            name: file.name,
+            type: file.type,
+            content: file.content,
+            extractedText: file.extractedText || '',
+          })),
+        });
 
-            emitLearningSignal('helpful_response', {
-              response_length: responseText.length,
-              mode: thinkingMode,
-            });
+        responseText = integrationResponse.result?.summary || integrationResponse.message || 'File analysis completed.';
+      } else {
+        responseText = await query(currentInput, 'gemini', undefined, currentFiles, thinkingMode);
+      }
 
-            setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.2, 0.8)]);
-            setMessages(prev => {
-              const updated = prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
-              persistSession(updated, simulationHistory);
-              return updated;
-            });
-        } else if (result && result.candidates) {
-            const candidate = result.candidates[0];
-            const parts = candidate.content?.parts || [];
-            let textOutput = "";
-            let imageOutput = "";
-            
-            parts.forEach((p: any) => {
-                if (p.text) textOutput += p.text;
-                if (p.inlineData) {
-                    imageOutput = `data:${p.inlineData.mimeType};base64,${p.inlineData.data}`;
-                }
-            });
+      const finalBotMsg = {
+        content: responseText,
+        isStreaming: false,
+      };
 
-            const finalBotMsg = { 
-              content: textOutput || (imageOutput ? "Predictive visualization processed." : ""), 
-              imageGenerated: imageOutput,
-              isStreaming: false 
-            };
+      emitLearningSignal('helpful_response', {
+        response_length: responseText.length,
+        mode: thinkingMode,
+      });
+      emitLearningSignal('prediction_success', {
+        response_length: responseText.length,
+        mode: thinkingMode,
+      });
+      emitLearningSignal('simulation_complete', {
+        success: true,
+        response_length: responseText.length,
+        mode: thinkingMode,
+      });
 
-            emitLearningSignal(
-              finalBotMsg.content.trim() ? 'helpful_response' : 'clarification_needed',
-              {
-                response_length: finalBotMsg.content.length,
-                mode: thinkingMode,
-              }
-            );
-
-            setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.2, 0.8)]);
-            setMessages(prev => {
-              const updated = prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
-              persistSession(updated, simulationHistory);
-              return updated;
-            });
-        }
-        else if (result && result[Symbol.asyncIterator]) {
-            let fullText = '';
-            let lastChunkTime = Date.now();
-            
-            for await (const chunk of result) {
-                const now = Date.now();
-                const latency = (now - lastChunkTime) / 1000;
-                lastChunkTime = now;
-
-                if (chunk.text) {
-                  fullText += chunk.text;
-                  const streamStress = Math.min(latency * 3, 0.9);
-                  setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(streamStress, 0.9)]);
-
-                  setMessages(prev => prev.map(m => {
-                      if (m.id !== botId) return m;
-                      
-                      // 1. Numerical Charts
-                      let chart: ChartConfig | undefined = undefined;
-                      const chartMatches = [...fullText.matchAll(/```chart-data\s*([\s\S]*?)\s*```/g)];
-                      if (chartMatches.length > 0) {
-                          const lastMatch = chartMatches[chartMatches.length - 1][1];
-                          try { chart = JSON.parse(lastMatch); } catch (e) {}
-                      }
-
-                      // 2. Structural Diagrams (Mermaid)
-                      let mermaid: string | undefined = undefined;
-                      const mermaidMatches = [...fullText.matchAll(/```mermaid\s*([\s\S]*?)\s*```/g)];
-                      if (mermaidMatches.length > 0) {
-                          mermaid = mermaidMatches[mermaidMatches.length - 1][1];
-                      }
-
-                      return { ...m, content: fullText, chartData: chart, mermaidData: mermaid };
-                  }));
-                }
-            }
-
-            emitLearningSignal(
-              fullText.trim() ? 'helpful_response' : 'clarification_needed',
-              {
-                response_length: fullText.length,
-                mode: thinkingMode,
-              }
-            );
-        }
+      setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.2, 0.8)]);
+      setMessages(prev => prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m));
     } catch (err: any) {
-        const message = err instanceof Error ? err.message : 'Request failed';
-        const isMissingKey = /missing gemini api key/i.test(message);
-        const userFacingError = isMissingKey
-          ? 'ERROR: Backend API not configured. Ensure GEMINI_API_KEY is set in .env.local and restart the backend server.'
-          : `ERROR: ${message}`;
-        emitLearningSignal('unhelpful_response', {
-          error: message,
-          mode: thinkingMode,
-        });
-        setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(1.0, 0)]);
-        setMessages(prev => prev.map(m => m.id === botId ? { ...m, content: userFacingError, isStreaming: false } : m));
+      const message = err instanceof Error ? err.message : 'Request failed';
+      const isMissingKey = /missing gemini api key/i.test(message);
+      const userFacingError = isMissingKey
+        ? 'ERROR: Backend API not configured. Ensure GEMINI_API_KEY is set in .env.local and restart the backend server.'
+        : `ERROR: ${message}`;
+      emitLearningSignal('unhelpful_response', {
+        error: message,
+        mode: thinkingMode,
+      });
+      emitLearningSignal('prediction_failure', {
+        error: message,
+        mode: thinkingMode,
+      });
+      emitLearningSignal('simulation_complete', {
+        success: false,
+        error: message,
+        mode: thinkingMode,
+      });
+      setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(1.0, 0)]);
+      setMessages(prev => prev.map(m => m.id === botId ? { ...m, content: userFacingError, isStreaming: false } : m));
     } finally {
-        setIsLoading(false);
-        setMessages(prev => {
-            const finalMessages = prev.map(m => m.id === botId ? { ...m, isStreaming: false } : m);
-            persistSession(finalMessages, simulationHistory);
-            return finalMessages;
-        });
+      setIsLoading(false);
+      setMessages(prev => prev.map(m => m.id === botId ? { ...m, isStreaming: false } : m));
     }
   };
 
-  if (!isReady) {
+  if (atlanteanLoading || (!isHealthy && !atlanteanError)) {
     return (
       <div className="h-full w-full flex flex-col items-center justify-center bg-black gap-6 transform-gpu">
         <Icon name="brain" className="w-16 h-16 text-[var(--color-primary)] animate-pulse" />
@@ -428,29 +329,14 @@ const ChatInterface: React.FC = () => {
     <div className="relative flex h-full w-full bg-black/40 overflow-hidden transform-gpu" style={{ contain: 'strict' }}>
       <VoiceModeOverlay isActive={isLiveActive} isModelSpeaking={isModelSpeaking} volume={volume} onClose={stopLive} />
 
-      <aside className="w-[380px] h-full flex-shrink-0 border-r hidden xl:flex flex-col bg-black/40 backdrop-blur-xl z-10" style={{ borderColor: 'var(--color-border)', contain: 'layout' }}>
-        <div className="flex border-b border-white/5 bg-black/20 p-1">
-          <button 
-            onClick={() => setSidebarTab('telemetry')}
-            className={`flex-1 py-3 text-[9px] font-bold uppercase tracking-[0.3em] rounded-lg transition-all ${sidebarTab === 'telemetry' ? 'bg-white/10 text-[var(--color-primary)]' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            Diagnostics
-          </button>
-          <button 
-            onClick={() => setSidebarTab('archives')}
-            className={`flex-1 py-3 text-[9px] font-bold uppercase tracking-[0.3em] rounded-lg transition-all ${sidebarTab === 'archives' ? 'bg-white/10 text-[var(--color-primary)]' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            Archives
-          </button>
-        </div>
-        
-        {sidebarTab === 'telemetry' ? (
+      <aside className="w-[440px] h-full flex-shrink-0 border-r hidden xl:flex flex-col bg-black/40 backdrop-blur-xl z-10 min-h-0" style={{ borderColor: 'var(--color-border)', contain: 'layout' }}>
+        <div className="h-[42%] min-h-0 border-b border-white/10">
           <SimulationVisualizer history={simulationHistory} messages={messages} />
-        ) : (
-          <NeuralArchives currentConvoId={convoId} onSelectConvo={loadSession} onNewConvo={startNewSession} />
-        )}
+        </div>
+        <div className="h-[58%] min-h-0 p-3 overflow-hidden">
+          <IntegrationHubPanel />
+        </div>
       </aside>
-
       <div className="flex-1 h-full flex flex-col relative z-0 min-w-0">
         <header className="flex-shrink-0 flex items-center justify-between px-6 py-4 border-b bg-black/60 backdrop-blur-md z-20" style={{ borderColor: 'var(--color-border)'}}>
            <div className="flex items-center gap-5">
@@ -465,6 +351,12 @@ const ChatInterface: React.FC = () => {
                             <span className="text-[9px] font-mono uppercase tracking-widest text-gray-500 group-hover:text-gray-300 transition-colors">
                                 {audioState === 'running' ? 'Intelligence Synced' : 'Sync Link'}
                             </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[9px] uppercase tracking-widest text-gray-500">Learning</span>
+                          <span className="rounded-full bg-white/5 px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.24em] text-white">
+                            {status ? `${(status.learning_capacity * 100).toFixed(1)}%` : '—'}
+                          </span>
                         </div>
                     </div>
                 </div>
@@ -633,12 +525,13 @@ const ChatInterface: React.FC = () => {
                         className="p-4 rounded-2xl border border-white/10 text-gray-400 hover:text-white hover:bg-white/10 hover:border-[var(--color-primary)]/50 transition-all active:scale-90 disabled:opacity-20"
                     >
                         <Icon name="paperclip" className="w-6 h-6" />
-                        <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" multiple />
+                        <input type="file" name="chat-attachments" ref={fileInputRef} onChange={handleFileChange} className="hidden" multiple />
                     </button>
                 </div>
                 
                 <div className="flex-1 relative group">
                     <textarea
+                    name="chat-message"
                     value={input}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}

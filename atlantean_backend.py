@@ -34,6 +34,8 @@ from dotenv import load_dotenv
 # .env.local values are used when present.
 load_dotenv('.env.local', override=True)
 
+from atlantean_core.integration_hub import IntegrationHub
+
 # Import the bridge module
 from atlantean_quadra_bridge import AtlanteanQuadraBridge, QuadraLearningEvent
 from hrm import HRMAdapter, HRMState
@@ -60,7 +62,7 @@ if SESSION_SECRET == 'dev-only-change-me':
 # Restrict CORS to specific origins (development and production)
 allowed_origins = os.getenv(
     'ALLOWED_ORIGINS',
-    'http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173'
+    'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173'
 ).split(',')
 allowed_origins = [o.strip() for o in allowed_origins]
 
@@ -152,6 +154,9 @@ EVENT_LOG_KEY_PREFIX = 'event_log:'
 EVENT_SEQ_KEY_PREFIX = 'event_seq:'
 EVENT_HEAD_HASH_PREFIX = 'event_head_hash:'
 CHECKPOINT_INDEX_PREFIX = 'checkpoint_index:'
+
+# Integration hub for ChatGPT-style capabilities
+integration_hub = IntegrationHub()
 CHECKPOINT_INTERVAL = 20
 SNAPSHOT_DATA_PREFIX = 'snapshot_data:'
 
@@ -1209,6 +1214,40 @@ def learning_event():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/atlantean/integrations', methods=['GET'])
+def list_integrations():
+    """List available ChatGPT-style integrations."""
+    session_id = _resolve_session_id(request.args.get('session_id'))
+    return jsonify(integration_hub.list_integrations())
+
+
+@app.route('/api/atlantean/integrations/run', methods=['POST'])
+def run_integration():
+    """Run a registered integration with a generic payload."""
+    data = request.json or {}
+    session_id = _resolve_session_id(data.get('session_id'))
+    integration_id = data.get('integration_id')
+    payload = data.get('payload', {})
+
+    if not integration_id:
+        return jsonify({'error': 'integration_id is required'}), 400
+
+    if not isinstance(payload, dict):
+        payload = {}
+
+    try:
+        result = integration_hub.run_integration(integration_id, payload)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'integration_id': integration_id,
+            'message': str(e),
+            'payload': payload,
+            'result': {},
+        }), 500
+
+
 # ========== Simulation Endpoints ==========
 
 @app.route('/api/atlantean/simulation/store', methods=['POST'])
@@ -1666,6 +1705,8 @@ if __name__ == '__main__':
     print("  GET  /api/atlantean/status          - Get intelligence status")
     print("  POST /api/atlantean/query           - Process user query")
     print("  GET  /api/atlantean/fields          - Get field visualization")
+    print("  GET  /api/atlantean/integrations    - List available integrations")
+    print("  POST /api/atlantean/integrations/run - Run a registered integration")
     print("  POST /api/atlantean/learning-event  - Trigger learning")
     print("  POST /api/atlantean/simulation/*    - Simulation storage")
     print("  POST /api/atlantean/snapshot        - Create snapshot")

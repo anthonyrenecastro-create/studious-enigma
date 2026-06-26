@@ -17,7 +17,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import * as atlantean from '../services/atlanteanService';
-import { Role, type Message } from '../types';
+import { Role, type Message, type FileData, type ThinkingMode } from '../types';
 import type { 
   AtlanteanStatus, 
   FieldData, 
@@ -36,7 +36,13 @@ export interface UseAtlanteanReturn {
   error: string | null;
   
   // Core functions
-  query: (input: string, provider?: 'gemini' | 'edenai' | 'mock') => Promise<string>;
+  query: (
+    input: string,
+    provider?: 'gemini' | 'edenai' | 'mock',
+    apiKey?: string,
+    files?: FileData[],
+    mode?: ThinkingMode
+  ) => Promise<string>;
   triggerEvent: (event: LearningEventType, data?: Record<string, any>) => Promise<void>;
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
   appendMessage: (message: Message) => void;
@@ -137,11 +143,14 @@ export function useAtlantean(): UseAtlanteanReturn {
   // Process query
   const query = useCallback(async (
     input: string,
-    provider: 'gemini' | 'edenai' | 'mock' = 'mock'
+    provider: 'gemini' | 'edenai' | 'mock' = 'mock',
+    apiKey?: string,
+    files: FileData[] = [],
+    mode?: ThinkingMode
   ): Promise<string> => {
     try {
       setError(null);
-      const result = await atlantean.query(input, provider);
+      const result = await atlantean.query(input, provider, apiKey, files, mode);
       setStatus(result.status);
       await refreshFields();
       return result.response;

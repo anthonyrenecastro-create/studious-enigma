@@ -5,6 +5,8 @@
  * This replaces traditional state management with field-based intelligence.
  */
 
+import type { FileData, ThinkingMode } from '../types';
+
 function normalizeAtlanteanApiBase(raw: string): string {
   const trimmed = String(raw).trim();
 
@@ -232,20 +234,35 @@ export async function query(
   input: string,
   llmProvider: 'gemini' | 'edenai' | 'mock' = 'gemini',
   apiKey?: string,
+  files: FileData[] = [],
+  mode?: ThinkingMode,
   // history parameter kept for API compatibility but is no longer forwarded —
   // the backend reconstructs context from Atlantean cold memory server-side.
   _history: Array<{ role: string; content: string }> = [],
   sessionId?: string
 ): Promise<QueryResponse> {
   const sid = resolveSessionId(sessionId);
-  const body: any = { 
-    input, 
+  const body: any = {
+    input,
     llm_provider: llmProvider,
     session_id: sid,
   };
-  
+
   if (apiKey) {
     body.api_key = apiKey;
+  }
+
+  if (files && files.length > 0) {
+    body.files = files.map((file) => ({
+      name: file.name,
+      type: file.type,
+      content: file.content,
+      extractedText: file.extractedText || '',
+    }));
+  }
+
+  if (mode) {
+    body.mode = mode;
   }
 
   // history is intentionally NOT forwarded to the backend.
