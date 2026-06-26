@@ -1248,6 +1248,24 @@ def run_integration():
         }), 500
 
 
+@app.route('/api/atlantean/integrations/image-providers/self-test', methods=['POST'])
+def self_test_image_providers():
+    """Self-test configured OpenAI/Gemini image providers and model compatibility."""
+    data = request.json or {}
+    _ = _resolve_session_id(data.get('session_id'))
+    prompt = data.get('prompt')
+
+    try:
+        report = integration_hub.self_test_image_providers(prompt=prompt)
+        return jsonify(report)
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Image provider self-test failed: {str(e)}',
+            'providers': {},
+        }), 500
+
+
 # ========== Simulation Endpoints ==========
 
 @app.route('/api/atlantean/simulation/store', methods=['POST'])

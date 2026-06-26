@@ -21,6 +21,7 @@ flask_session/
 # Runtime state artifacts
 *.bin
 quadra-seer-intelligence.zip
+db/integrations/*.json
 
 # Editor directories and files
 .vscode/*

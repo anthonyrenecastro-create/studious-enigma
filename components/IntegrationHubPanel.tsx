@@ -549,6 +549,15 @@ export default function IntegrationHubPanel() {
       {resultByWindow[windowKey] && (
         <div className="rounded-xl border border-white/10 bg-black/40 p-3 text-[10px] text-gray-200">
           <div className="font-semibold text-white">{resultByWindow[windowKey]?.message}</div>
+          {(resultByWindow[windowKey]?.result?.image_data_url || resultByWindow[windowKey]?.payload?.image_data_url) && (
+            <div className="mt-2 overflow-hidden rounded-lg border border-white/10 bg-black/30 p-2">
+              <img
+                src={(resultByWindow[windowKey]?.result?.image_data_url || resultByWindow[windowKey]?.payload?.image_data_url) as string}
+                alt="Generated integration result"
+                className="max-h-56 w-full rounded-md object-contain"
+              />
+            </div>
+          )}
           <pre className="mt-2 max-h-28 overflow-auto rounded-md bg-black/50 p-2 text-[10px] text-gray-300">
             {JSON.stringify(resultByWindow[windowKey]?.result || resultByWindow[windowKey]?.payload, null, 2)}
           </pre>
@@ -605,6 +614,22 @@ export default function IntegrationHubPanel() {
       {resultByWindow[windowKey] && (
         <div className="rounded-xl border border-white/10 bg-black/40 p-3 text-[10px] text-gray-200">
           <div className="font-semibold text-white">{resultByWindow[windowKey]?.message}</div>
+          {(resultByWindow[windowKey]?.result?.stdout || resultByWindow[windowKey]?.result?.stderr) && (
+            <div className="mt-2 space-y-2">
+              <div>
+                <div className="mb-1 text-[9px] uppercase tracking-[0.14em] text-gray-400">Stdout</div>
+                <pre className="max-h-24 overflow-auto rounded-md bg-black/60 p-2 text-[10px] text-green-300">
+                  {(resultByWindow[windowKey]?.result?.stdout as string) || '[no output]'}
+                </pre>
+              </div>
+              <div>
+                <div className="mb-1 text-[9px] uppercase tracking-[0.14em] text-gray-400">Stderr</div>
+                <pre className="max-h-24 overflow-auto rounded-md bg-black/60 p-2 text-[10px] text-rose-300">
+                  {(resultByWindow[windowKey]?.result?.stderr as string) || '[no errors]'}
+                </pre>
+              </div>
+            </div>
+          )}
           <pre className="mt-2 max-h-28 overflow-auto rounded-md bg-black/50 p-2 text-[10px] text-gray-300">
             {JSON.stringify(resultByWindow[windowKey]?.result || resultByWindow[windowKey]?.payload, null, 2)}
           </pre>
