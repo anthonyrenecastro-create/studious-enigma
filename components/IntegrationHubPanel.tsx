@@ -66,7 +66,8 @@ const MAX_VISIBLE_WINDOWS = 8;
 export default function IntegrationHubPanel() {
   const [integrations, setIntegrations] = useState<IntegrationDescriptor[]>(fallbackIntegrations);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [resultByWindow, setResultByWindow] = useState<Record<string, IntegrationRunResponse | null>>({});
   const [runningId, setRunningId] = useState<string | null>(null);
 
@@ -97,11 +98,11 @@ export default function IntegrationHubPanel() {
         const data = await listIntegrations();
         if (!cancelled) {
           setIntegrations(data);
-          setError(null);
+          setLoadError(null);
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load integrations');
+          setLoadError(err instanceof Error ? err.message : 'Failed to load integrations');
         }
       } finally {
         if (!cancelled) {
@@ -302,9 +303,9 @@ export default function IntegrationHubPanel() {
       }
 
       setSelectedFiles((prev) => [...prev, ...newFiles]);
-      setError(null);
+      setActionError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to parse files');
+      setActionError(err instanceof Error ? err.message : 'Unable to parse files');
     } finally {
       setIsParsingFiles(false);
       if (fileInputRef.current) {
@@ -332,9 +333,9 @@ export default function IntegrationHubPanel() {
       }
 
       setImageFiles((prev) => [...prev, ...parsedImages]);
-      setError(null);
+      setActionError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to parse image files');
+      setActionError(err instanceof Error ? err.message : 'Unable to parse image files');
     } finally {
       setIsParsingFiles(false);
       if (imageInputRef.current) {
@@ -357,13 +358,13 @@ export default function IntegrationHubPanel() {
     payload: Record<string, any>
   ) => {
     setRunningId(integrationId);
-    setError(null);
+    setActionError(null);
     setResultByWindow((prev) => ({ ...prev, [windowKey]: null }));
     try {
       const response = await runIntegration(integrationId, payload);
       setResultByWindow((prev) => ({ ...prev, [windowKey]: response }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Integration execution failed');
+      setActionError(err instanceof Error ? err.message : 'Integration execution failed');
     } finally {
       setRunningId(null);
     }
@@ -371,7 +372,7 @@ export default function IntegrationHubPanel() {
 
   const handleRunAnalysis = async (windowKey: string) => {
     if (selectedFiles.length === 0) {
-      setError('Attach at least one file to run file analysis.');
+      setActionError('Attach at least one file to run file analysis.');
       return;
     }
 
@@ -670,9 +671,14 @@ export default function IntegrationHubPanel() {
       </div>
 
       {loading && <div className="text-xs text-gray-400 mb-2">Loading integrations...</div>}
-      {error && (
+      {loadError && (
         <div className="text-xs text-rose-400 mb-2">
-          Unable to fetch integrations from the backend. Using local fallback integration data. {error}
+          Unable to fetch integrations from the backend. Using local fallback integration data. {loadError}
+        </div>
+      )}
+      {actionError && (
+        <div className="text-xs text-rose-400 mb-2">
+          {actionError}
         </div>
       )}
 
