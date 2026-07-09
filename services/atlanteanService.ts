@@ -98,6 +98,25 @@ export function getStableSessionId(): string {
   }
 }
 
+export function setStableSessionId(sessionId: string): string {
+  const normalized = String(sessionId || '').trim();
+  const effective = normalized || generateSessionId();
+
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      window.localStorage.setItem(ATLANTEAN_SESSION_STORAGE_KEY, effective);
+    } catch {
+      // Ignore storage failures and still return the effective id.
+    }
+  }
+
+  return effective;
+}
+
+export function createAndSetStableSessionId(): string {
+  return setStableSessionId(generateSessionId());
+}
+
 function resolveSessionId(sessionId?: string): string {
   return sessionId || getStableSessionId();
 }

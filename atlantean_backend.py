@@ -28,6 +28,10 @@ from typing import Any, Dict, List
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+from event_normalization import (
+    normalize_disconnect_reason,
+    normalize_learning_event_payload,
+)
 
 # Load environment variables.
 # In Docker Compose, GEMINI_* may be injected as empty strings; override ensures
@@ -198,6 +202,14 @@ def _sanitize_model_output(text: str, user_input: str) -> str:
         )
 
     return text
+
+
+def _normalize_disconnect_reason(value: Any) -> str:
+    return normalize_disconnect_reason(value)
+
+
+def _normalize_learning_event_payload(event: str, event_data: Any) -> Dict[str, Any]:
+    return normalize_learning_event_payload(event, event_data, QuadraLearningEvent.VOICE_SESSION_END)
 
 
 def _canonical_json(data: Any) -> str:
@@ -1174,7 +1186,7 @@ def learning_event():
     data = request.json
     session_id = _resolve_session_id(data.get('session_id'))
     event = data.get('event')
-    event_data = data.get('data', {})
+    event_data = _normalize_learning_event_payload(event, data.get('data', {}))
     
     if not event:
         return jsonify({'error': 'No event type provided'}), 400

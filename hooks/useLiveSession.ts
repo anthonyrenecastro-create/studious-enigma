@@ -4,10 +4,18 @@ import { GoogleGenAI, Modality } from '@google/genai';
 import { decodeAudio, decodeAudioData, createBlob } from '../utils/audioUtils';
 import { DEFAULT_TTS_VOICE, TtsVoice } from '../services/ttsService';
 
+export type LiveSessionEndReason =
+  | 'user_disconnect'
+  | 'protocol_close'
+  | 'protocol_error'
+  | 'initialization_failed'
+  | 'unknown';
+
 export const useLiveSession = (voiceName: TtsVoice = DEFAULT_TTS_VOICE) => {
   const [isActive, setIsActive] = useState(false);
   const [isModelSpeaking, setIsModelSpeaking] = useState(false);
   const [volume, setVolume] = useState(0);
+  const [lastEndReason, setLastEndReason] = useState<LiveSessionEndReason>('unknown');
   
   const sessionRef = useRef<any>(null);
   const outCtxRef = useRef<AudioContext | null>(null);
@@ -17,8 +25,9 @@ export const useLiveSession = (voiceName: TtsVoice = DEFAULT_TTS_VOICE) => {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const stop = useCallback(() => {
+  const stop = useCallback((reason: LiveSessionEndReason = 'user_disconnect') => {
     console.debug("[Live] Stopping session...");
+    setLastEndReason(reason);
     if (sessionRef.current) {
       try { sessionRef.current.close(); } catch(e) {}
       sessionRef.current = null;
@@ -54,6 +63,7 @@ export const useLiveSession = (voiceName: TtsVoice = DEFAULT_TTS_VOICE) => {
     if (isActive) return;
     try {
       console.debug("[Live] Initializing session...");
+      setLastEndReason('unknown');
       const apiKey =
         (import.meta as any).env?.VITE_GEMINI_API_KEY ||
         (process as any)?.env?.API_KEY;
@@ -128,11 +138,11 @@ export const useLiveSession = (voiceName: TtsVoice = DEFAULT_TTS_VOICE) => {
           },
           onerror: (e) => { 
             console.error("[Live] Protocol error:", e);
-            stop(); 
+            stop('protocol_error'); 
           },
           onclose: (e) => {
             console.debug("[Live] Protocol closed.");
-            stop();
+            stop('protocol_close');
           },
         },
         config: {
@@ -149,7 +159,7 @@ export const useLiveSession = (voiceName: TtsVoice = DEFAULT_TTS_VOICE) => {
       sessionRef.current = await sessionPromise;
     } catch (err) { 
       console.error("[Live] Initialization failed:", err);
-      stop(); 
+      stop('initialization_failed'); 
     }
   }, [isActive, stop, voiceName]);
 
@@ -168,5 +178,5 @@ export const useLiveSession = (voiceName: TtsVoice = DEFAULT_TTS_VOICE) => {
     return () => cancelAnimationFrame(frame);
   }, [isActive]);
 
-  return { start, stop, isActive, isModelSpeaking, volume };
+  return { start, stop, isActive, isModelSpeaking, volume, lastEndReason };
 };

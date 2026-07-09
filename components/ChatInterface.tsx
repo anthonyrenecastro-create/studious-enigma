@@ -1,8 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Message, Role, UserProfile, FileData, ThinkingMode, ChartConfig, Conversation } from '../types';
+import { Message, Role, UserProfile, FileData, ThinkingMode, ChartConfig } from '../types';
 import streamChatResponse from '../services/geminiService';
-import { loadConversation, saveConversation } from '../services/apiService';
 import { resetSimulation, runSimulationStep } from '../services/simulationService';
 import ChatMessage from './ChatMessage';
 import TypingIndicator from './TypingIndicator';
@@ -14,19 +13,33 @@ import VoiceModeOverlay from './VoiceModeOverlay';
 import { useSpeechToText } from '../hooks/useSpeechToText';
 import { useTextToSpeech, wakeAudioContext, getAudioState } from '../hooks/useTextToSpeech';
 import { useLiveSession } from '../hooks/useLiveSession';
-import { USER_PROFILE_KEY, CHAT_HISTORY_KEY } from '../constants';
-import { triggerLearningEvent } from '../services/atlanteanService';
+import { USER_PROFILE_KEY } from '../constants';
+import { useAtlantean } from '../hooks/useAtlantean';
+import { createAndSetStableSessionId, getChatHistory, setStableSessionId } from '../services/atlanteanService';
 import { getTtsVoice, setTtsVoice } from '../services/settingsService';
 import { TtsVoice } from '../services/ttsService';
 
 const ChatInterface: React.FC = () => {
   const [isReady, setIsReady] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const {
+    messages,
+    status,
+    setMessages,
+    clearMessages,
+    triggerEvent,
+    storeSimulation,
+    recallSimulations,
+    refreshStatus,
+    refreshFields,
+  } = useAtlantean();
   const [feedbackSent, setFeedbackSent] = useState<Record<string, 'positive' | 'negative' | 'correction'>>({});
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isFileParsing, setIsFileParsing] = useState(false);
-  const [simulationHistory, setSimulationHistory] = useState<any[]>([]);
+  const [simulationHistory, setSimulationHistory] = useState<any[]>(() => {
+    resetSimulation();
+    return Array.from({ length: 30 }, () => runSimulationStep(0.05, 0));
+  });
   const [pendingFiles, setPendingFiles] = useState<FileData[]>([]);
   const [previewFileIndex, setPreviewFileIndex] = useState<number | null>(null);
   const [isProfileModalOpen, setProfileModalOpen] = useState(false);
@@ -34,9 +47,8 @@ const ChatInterface: React.FC = () => {
   const [audioState, setAudioState] = useState(getAudioState());
   const [sidebarTab, setSidebarTab] = useState<'telemetry' | 'archives'>('telemetry');
   const [ttsVoice, setTtsVoiceState] = useState<TtsVoice>(getTtsVoice());
-  
-  const [convoId, setConvoId] = useState<string>('');
-  const [convoCreatedAt, setConvoCreatedAt] = useState<number>(Date.now());
+  const [convoId, setConvoId] = useState<string>(createAndSetStableSessionId());
+  const [simulationWrites, setSimulationWrites] = useState(0);
 
   const [userProfile, setUserProfile] = useState<UserProfile>({
     username: 'Operator',
@@ -56,9 +68,30 @@ const ChatInterface: React.FC = () => {
   const onInterimTranscript = useCallback((transcript: string) => setInterimInput(transcript), []);
   
   const { isListening, startListening: baseStartListening, stopListening } = useSpeechToText(onFinalTranscript, onInterimTranscript);
-  const { start: baseStartLive, stop: stopLive, isActive: isLiveActive, isModelSpeaking, volume } = useLiveSession(ttsVoice);
+  const {
+    start: baseStartLive,
+    stop: stopLive,
+    isActive: isLiveActive,
+    isModelSpeaking,
+    volume,
+    lastEndReason,
+  } = useLiveSession(ttsVoice);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const wasLiveActiveRef = useRef(false);
+  const voiceMetricsRef = useRef({
+    startedAt: 0,
+    samples: 0,
+    totalVolume: 0,
+    peakVolume: 0,
+    modelSpeakingSamples: 0,
+  });
+
+  const pushSimulationStep = useCallback((stressFactor: number, activity: number) => {
+    const packet = runSimulationStep(stressFactor, activity);
+    setSimulationHistory(prev => [...prev.slice(-99), packet]);
+    return packet;
+  }, []);
 
   const syncAudio = async () => {
       const state = await wakeAudioContext();
@@ -69,6 +102,10 @@ const ChatInterface: React.FC = () => {
     await syncAudio();
     baseStartLive();
   };
+
+  const handleLiveDisconnect = useCallback(() => {
+    stopLive('user_disconnect');
+  }, [stopLive]);
 
   const startListening = async () => {
     await syncAudio();
@@ -144,50 +181,51 @@ const ChatInterface: React.FC = () => {
   const selectedPreviewUrl = selectedPreviewFile
     ? `data:${selectedPreviewFile.type || 'application/octet-stream'};base64,${selectedPreviewFile.content}`
     : null;
+  const learningCapacityPct = status ? Math.max(0, Math.min(100, status.learning_capacity * 100)) : null;
 
-  const persistSession = useCallback(async (currentMessages: Message[], currentSim: any[]) => {
-    if (!convoId) return;
+  const hydrateSessionMessages = useCallback(async () => {
     try {
-      const session: Conversation = {
-        id: convoId,
-        messages: currentMessages,
-        summary: currentMessages.length > 0 ? currentMessages[currentMessages.length-1].content.slice(0, 100) : "Intelligence session active.",
-        simulationHistory: currentSim,
-        createdAt: convoCreatedAt,
-        isPublic: false
-      };
-      await saveConversation(session);
-      localStorage.setItem(CHAT_HISTORY_KEY, convoId);
-    } catch (e) {
-      console.error("Persistence failure:", e);
+      const data = await getChatHistory(80);
+      const restored = (data.messages || []).map((msg, idx) => ({
+        id: msg.id || `hist-${msg.timestamp}-${idx}`,
+        role: msg.role === 'user' ? Role.USER : Role.BOT,
+        content: msg.content,
+      })) as Message[];
+      setMessages(restored);
+    } catch (err) {
+      console.warn('Failed to hydrate Atlantean chat history:', err);
+      setMessages([]);
     }
-  }, [convoId, convoCreatedAt]);
+  }, [setMessages]);
 
-  const loadSession = async (id?: string) => {
+  const loadSession = useCallback(async (id?: string) => {
     setIsReady(false);
     try {
-      resetSimulation();
-      const convo = await loadConversation(id);
-      setMessages(convo.messages || []);
-      if (convo.simulationHistory && convo.simulationHistory.length > 0) {
-          setSimulationHistory(convo.simulationHistory);
-      } else {
-          const seedHistory = Array.from({ length: 30 }, () => runSimulationStep(0.05, 0));
-          setSimulationHistory(seedHistory);
+      if (id && id.trim()) {
+        setStableSessionId(id.trim());
       }
-      setConvoId(convo.id);
-      setConvoCreatedAt(convo.createdAt || Date.now());
+      await Promise.all([hydrateSessionMessages(), refreshStatus(), refreshFields()]);
+      setConvoId(id?.trim() || convoId);
+      setSimulationHistory(Array.from({ length: 30 }, () => runSimulationStep(0.05, 0)));
     } catch (e) {
-      console.error("Session load failure:", e);
+      console.error('Session load failure:', e);
     } finally {
       setIsReady(true);
     }
-  };
+  }, [convoId, hydrateSessionMessages, refreshFields, refreshStatus]);
 
-  const startNewSession = async () => {
-    localStorage.removeItem(CHAT_HISTORY_KEY);
-    await loadSession();
-  };
+  const startNewSession = useCallback(async () => {
+    const newSessionId = createAndSetStableSessionId();
+    setConvoId(newSessionId);
+    clearMessages();
+    resetSimulation();
+    setSimulationHistory(Array.from({ length: 30 }, () => runSimulationStep(0.05, 0)));
+    await Promise.all([refreshStatus(), refreshFields()]);
+  }, [clearMessages, refreshFields, refreshStatus]);
+
+  const handleSnapshotRestored = useCallback(async () => {
+    await loadSession(convoId);
+  }, [convoId, loadSession]);
 
   useEffect(() => {
     const initData = async () => {
@@ -196,7 +234,7 @@ const ChatInterface: React.FC = () => {
         if (storedProfile) {
           try { setUserProfile(JSON.parse(storedProfile)); } catch (e) {}
         }
-        await loadSession();
+        await loadSession(convoId);
       } catch (error) {
         console.error("[System] Boot failure:", error);
       } finally {
@@ -204,15 +242,57 @@ const ChatInterface: React.FC = () => {
       }
     };
     initData();
-  }, []);
+  }, [convoId, loadSession]);
 
   useEffect(() => {
     if (!isReady || isLoading) return;
     const interval = setInterval(() => {
-        setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.05, 0)]);
+        pushSimulationStep(0.05, 0);
     }, 4000);
     return () => clearInterval(interval);
-  }, [isReady, isLoading]);
+  }, [isReady, isLoading, pushSimulationStep]);
+
+  useEffect(() => {
+    if (isLiveActive) {
+      voiceMetricsRef.current.startedAt = Date.now();
+      voiceMetricsRef.current.samples = 0;
+      voiceMetricsRef.current.totalVolume = 0;
+      voiceMetricsRef.current.peakVolume = 0;
+      voiceMetricsRef.current.modelSpeakingSamples = 0;
+      wasLiveActiveRef.current = true;
+      return;
+    }
+
+    if (wasLiveActiveRef.current) {
+      wasLiveActiveRef.current = false;
+      const elapsedMs = Math.max(0, Date.now() - voiceMetricsRef.current.startedAt);
+      const samples = Math.max(voiceMetricsRef.current.samples, 1);
+      const avgVolume = voiceMetricsRef.current.totalVolume / samples;
+      const speakingRatio = voiceMetricsRef.current.modelSpeakingSamples / samples;
+
+      void triggerEvent('voice_session_end', {
+        duration_seconds: Number((elapsedMs / 1000).toFixed(2)),
+        average_volume: Number(avgVolume.toFixed(2)),
+        peak_volume: Number(voiceMetricsRef.current.peakVolume.toFixed(2)),
+        model_speaking_ratio: Number(speakingRatio.toFixed(3)),
+        disconnect_reason: lastEndReason,
+        thinking_mode: thinkingMode,
+        voice: ttsVoice,
+      }).catch((error) => {
+        console.warn("Learning signal 'voice_session_end' failed:", error);
+      });
+    }
+  }, [isLiveActive, lastEndReason, thinkingMode, triggerEvent, ttsVoice]);
+
+  useEffect(() => {
+    if (!isLiveActive) return;
+    voiceMetricsRef.current.samples += 1;
+    voiceMetricsRef.current.totalVolume += volume;
+    voiceMetricsRef.current.peakVolume = Math.max(voiceMetricsRef.current.peakVolume, volume);
+    if (isModelSpeaking) {
+      voiceMetricsRef.current.modelSpeakingSamples += 1;
+    }
+  }, [isLiveActive, isModelSpeaking, volume]);
 
   useEffect(() => {
     if (isReady && chatEndRef.current) {
@@ -243,7 +323,7 @@ const ChatInterface: React.FC = () => {
     } as const;
 
     try {
-      await triggerLearningEvent(eventMap[feedback], {
+      await triggerEvent(eventMap[feedback], {
         message_id: messageId,
         feedback,
         strength: strengthMap[feedback],
@@ -254,7 +334,7 @@ const ChatInterface: React.FC = () => {
     } catch (error) {
       console.warn(`Feedback learning signal '${feedback}' failed:`, error);
     }
-  }, [feedbackSent, thinkingMode]);
+  }, [feedbackSent, thinkingMode, triggerEvent]);
 
   const handleSendMessage = async () => {
     if (isLoading || (input.trim() === '' && pendingFiles.length === 0)) return;
@@ -263,7 +343,7 @@ const ChatInterface: React.FC = () => {
       event: 'high_engagement' | 'helpful_response' | 'unhelpful_response' | 'clarification_needed',
       data: Record<string, any> = {}
     ) => {
-      void triggerLearningEvent(event, data).catch((error) => {
+      void triggerEvent(event, data).catch((error) => {
         console.warn(`Learning signal '${event}' failed:`, error);
       });
     };
@@ -275,7 +355,7 @@ const ChatInterface: React.FC = () => {
       attachments: pendingFiles.map(f => f.name)
     };
     
-    setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.3, 0.4)]);
+    pushSimulationStep(0.3, 0.4);
     const nextMessages = [...messages, userMsg];
     setMessages(nextMessages);
 
@@ -294,6 +374,9 @@ const ChatInterface: React.FC = () => {
     const botId = `b-${Date.now()}`;
     setMessages(prev => [...prev, { id: botId, role: Role.BOT, content: '', isStreaming: true }]);
 
+    let outcomePacket = pushSimulationStep(0.1, 0.2);
+    let simulationOutcome: 'success' | 'failure' = 'success';
+
     try {
         const result = await streamChatResponse(nextMessages, currentInput, currentFiles, thinkingMode);
         const responseText = typeof result?.response === 'string' ? result.response : '';
@@ -309,11 +392,9 @@ const ChatInterface: React.FC = () => {
               mode: thinkingMode,
             });
 
-            setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.2, 0.8)]);
+            outcomePacket = pushSimulationStep(0.2, 0.8);
             setMessages(prev => {
-              const updated = prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
-              persistSession(updated, simulationHistory);
-              return updated;
+              return prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
             });
         } else if (result && result.candidates) {
             const candidate = result.candidates[0];
@@ -342,11 +423,9 @@ const ChatInterface: React.FC = () => {
               }
             );
 
-            setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(0.2, 0.8)]);
+            outcomePacket = pushSimulationStep(0.2, 0.8);
             setMessages(prev => {
-              const updated = prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
-              persistSession(updated, simulationHistory);
-              return updated;
+              return prev.map(m => m.id === botId ? { ...m, ...finalBotMsg } : m);
             });
         }
         else if (result && result[Symbol.asyncIterator]) {
@@ -361,7 +440,7 @@ const ChatInterface: React.FC = () => {
                 if (chunk.text) {
                   fullText += chunk.text;
                   const streamStress = Math.min(latency * 3, 0.9);
-                  setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(streamStress, 0.9)]);
+                  outcomePacket = pushSimulationStep(streamStress, 0.9);
 
                   setMessages(prev => prev.map(m => {
                       if (m.id !== botId) return m;
@@ -395,6 +474,7 @@ const ChatInterface: React.FC = () => {
             );
         }
     } catch (err: any) {
+        simulationOutcome = 'failure';
         const message = err instanceof Error ? err.message : 'Request failed';
         const isMissingKey = /missing gemini api key/i.test(message);
         const userFacingError = isMissingKey
@@ -404,15 +484,45 @@ const ChatInterface: React.FC = () => {
           error: message,
           mode: thinkingMode,
         });
-        setSimulationHistory(prev => [...prev.slice(-99), runSimulationStep(1.0, 0)]);
+        outcomePacket = pushSimulationStep(1.0, 0);
         setMessages(prev => prev.map(m => m.id === botId ? { ...m, content: userFacingError, isStreaming: false } : m));
     } finally {
-        setIsLoading(false);
-        setMessages(prev => {
-            const finalMessages = prev.map(m => m.id === botId ? { ...m, isStreaming: false } : m);
-            persistSession(finalMessages, simulationHistory);
-            return finalMessages;
+      void triggerEvent('simulation_complete', {
+        outcome: simulationOutcome,
+        stability: Number((outcomePacket?.stability ?? 0).toFixed(4)),
+        coherence: Number((outcomePacket?.coherence ?? 0).toFixed(4)),
+        load: Number((outcomePacket?.load ?? 0).toFixed(4)),
+        drift: Number((outcomePacket?.drift ?? 0).toFixed(4)),
+        q_entropy: Number((outcomePacket?.q_entropy ?? 0).toFixed(4)),
+        mode: thinkingMode,
+        attachments: currentFiles.length,
+      }).catch((error) => {
+        console.warn("Learning signal 'simulation_complete' failed:", error);
+      });
+
+      const simulationRecord = {
+        scenario: currentInput,
+        outcome: simulationOutcome,
+        mode: thinkingMode,
+        attachments: currentFiles.length,
+        metrics: {
+          stability: Number((outcomePacket?.stability ?? 0).toFixed(4)),
+          coherence: Number((outcomePacket?.coherence ?? 0).toFixed(4)),
+          load: Number((outcomePacket?.load ?? 0).toFixed(4)),
+          drift: Number((outcomePacket?.drift ?? 0).toFixed(4)),
+          q_entropy: Number((outcomePacket?.q_entropy ?? 0).toFixed(4)),
+        },
+        timestamp: Date.now(),
+      };
+
+      void storeSimulation(simulationRecord, Math.max(0.1, Math.min(1, outcomePacket?.coherence ?? 0.5)))
+        .then(() => setSimulationWrites(prev => prev + 1))
+        .catch((error) => {
+          console.warn('Failed to persist simulation to cold memory:', error);
         });
+
+        setIsLoading(false);
+      setMessages(prev => prev.map(m => m.id === botId ? { ...m, isStreaming: false } : m));
     }
   };
 
@@ -426,7 +536,12 @@ const ChatInterface: React.FC = () => {
 
   return (
     <div className="relative flex h-full w-full bg-black/40 overflow-hidden transform-gpu" style={{ contain: 'strict' }}>
-      <VoiceModeOverlay isActive={isLiveActive} isModelSpeaking={isModelSpeaking} volume={volume} onClose={stopLive} />
+      <VoiceModeOverlay
+        isActive={isLiveActive}
+        isModelSpeaking={isModelSpeaking}
+        volume={volume}
+        onClose={handleLiveDisconnect}
+      />
 
       <aside className="w-[380px] h-full flex-shrink-0 border-r hidden xl:flex flex-col bg-black/40 backdrop-blur-xl z-10" style={{ borderColor: 'var(--color-border)', contain: 'layout' }}>
         <div className="flex border-b border-white/5 bg-black/20 p-1">
@@ -445,9 +560,18 @@ const ChatInterface: React.FC = () => {
         </div>
         
         {sidebarTab === 'telemetry' ? (
-          <SimulationVisualizer history={simulationHistory} messages={messages} />
+          <SimulationVisualizer
+            history={simulationHistory}
+            messages={messages}
+            recallSimulations={recallSimulations}
+            simulationWrites={simulationWrites}
+          />
         ) : (
-          <NeuralArchives currentConvoId={convoId} onSelectConvo={loadSession} onNewConvo={startNewSession} />
+          <NeuralArchives
+            currentSessionId={convoId}
+            onNewSession={startNewSession}
+            onRestoredSnapshot={handleSnapshotRestored}
+          />
         )}
       </aside>
 
@@ -465,6 +589,11 @@ const ChatInterface: React.FC = () => {
                             <span className="text-[9px] font-mono uppercase tracking-widest text-gray-500 group-hover:text-gray-300 transition-colors">
                                 {audioState === 'running' ? 'Intelligence Synced' : 'Sync Link'}
                             </span>
+                            {learningCapacityPct !== null && (
+                              <span className="ml-2 rounded-full border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[8px] font-mono uppercase tracking-wider text-amber-300">
+                                Learn {learningCapacityPct.toFixed(1)}%
+                              </span>
+                            )}
                         </div>
                     </div>
                 </div>
