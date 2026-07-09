@@ -7,9 +7,11 @@ import ChatMessage from './ChatMessage';
 import TypingIndicator from './TypingIndicator';
 import Icon from './Icon';
 import SimulationVisualizer from './SimulationVisualizer';
+import AtlanteanStatusPanel from './AtlanteanStatusPanel';
 import NeuralArchives from './NeuralArchives';
 import ProfileModal from './ProfileModal';
 import VoiceModeOverlay from './VoiceModeOverlay';
+import ToastCenter, { type ToastItem, type ToastKind } from './ToastCenter';
 import { useSpeechToText } from '../hooks/useSpeechToText';
 import { useTextToSpeech, wakeAudioContext, getAudioState } from '../hooks/useTextToSpeech';
 import { useLiveSession } from '../hooks/useLiveSession';
@@ -19,18 +21,27 @@ import { createAndSetStableSessionId, getChatHistory, setStableSessionId } from 
 import { getTtsVoice, setTtsVoice } from '../services/settingsService';
 import { TtsVoice } from '../services/ttsService';
 
+const ONBOARDING_STORAGE_KEY = 'atlantean.onboarding.completed.v1';
+
 const ChatInterface: React.FC = () => {
   const [isReady, setIsReady] = useState(false);
   const {
     messages,
     status,
+    fields,
+    isLoading: atlanteanLoading,
+    isRefreshingFields,
     setMessages,
     clearMessages,
     triggerEvent,
     storeSimulation,
     recallSimulations,
+    prepareSyncPackage,
+    mergeSyncPackage,
     refreshStatus,
     refreshFields,
+    error: bridgeError,
+    refreshTelemetry,
   } = useAtlantean();
   const [feedbackSent, setFeedbackSent] = useState<Record<string, 'positive' | 'negative' | 'correction'>>({});
   const [input, setInput] = useState('');
@@ -45,10 +56,14 @@ const ChatInterface: React.FC = () => {
   const [isProfileModalOpen, setProfileModalOpen] = useState(false);
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>(ThinkingMode.STANDARD);
   const [audioState, setAudioState] = useState(getAudioState());
-  const [sidebarTab, setSidebarTab] = useState<'telemetry' | 'archives'>('telemetry');
+  const [sidebarTab, setSidebarTab] = useState<'telemetry' | 'status' | 'archives'>('telemetry');
   const [ttsVoice, setTtsVoiceState] = useState<TtsVoice>(getTtsVoice());
   const [convoId, setConvoId] = useState<string>(createAndSetStableSessionId());
   const [simulationWrites, setSimulationWrites] = useState(0);
+  const [syncStatusText, setSyncStatusText] = useState('No sync activity yet.');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const [userProfile, setUserProfile] = useState<UserProfile>({
     username: 'Operator',
@@ -86,6 +101,35 @@ const ChatInterface: React.FC = () => {
     peakVolume: 0,
     modelSpeakingSamples: 0,
   });
+  const syncMetricsRef = useRef({
+    exportCount: 0,
+    importCount: 0,
+    exportTotalMs: 0,
+    importTotalMs: 0,
+    lastExportMs: 0,
+    lastImportMs: 0,
+  });
+
+  const toastTimersRef = useRef<Record<string, number>>({});
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+    const timer = toastTimersRef.current[id];
+    if (timer) {
+      window.clearTimeout(timer);
+      delete toastTimersRef.current[id];
+    }
+  }, []);
+
+  const notify = useCallback((kind: ToastKind, message: string, durationMs = 4200) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setToasts(prev => [...prev, { id, kind, message }]);
+    const timer = window.setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+      delete toastTimersRef.current[id];
+    }, durationMs);
+    toastTimersRef.current[id] = timer;
+  }, []);
 
   const pushSimulationStep = useCallback((stressFactor: number, activity: number) => {
     const packet = runSimulationStep(stressFactor, activity);
@@ -198,6 +242,81 @@ const ChatInterface: React.FC = () => {
     }
   }, [setMessages]);
 
+  const handleExportSyncPackage = useCallback(async () => {
+    const startedAt = performance.now();
+    try {
+      setIsSyncing(true);
+      setSyncStatusText('Preparing sync package...');
+      const pkg = await prepareSyncPackage();
+
+      const payload = {
+        schema_version: 1,
+        exported_at: Date.now(),
+        session_id: convoId,
+        package: pkg,
+      };
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `atlantean-sync-${convoId}-${Date.now()}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+
+      const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt));
+      syncMetricsRef.current.exportCount += 1;
+      syncMetricsRef.current.exportTotalMs += elapsedMs;
+      syncMetricsRef.current.lastExportMs = elapsedMs;
+      const avgMs = Math.round(syncMetricsRef.current.exportTotalMs / syncMetricsRef.current.exportCount);
+      const exportedMsg = `Sync package exported at ${new Date().toLocaleTimeString()} (${elapsedMs}ms).`;
+      setSyncStatusText(exportedMsg);
+      notify('success', `Sync export complete in ${elapsedMs}ms (avg ${avgMs}ms).`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to export sync package';
+      setSyncStatusText(`Sync export failed: ${message}`);
+      notify('error', `Sync export failed: ${message}`, 6000);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [convoId, notify, prepareSyncPackage]);
+
+  const handleImportSyncPackage = useCallback(async (file: File) => {
+    const startedAt = performance.now();
+    try {
+      setIsSyncing(true);
+      setSyncStatusText(`Importing ${file.name}...`);
+
+      const raw = await file.text();
+      const parsed = JSON.parse(raw);
+      const incomingPackage = parsed?.package ?? parsed;
+
+      if (!incomingPackage || typeof incomingPackage !== 'object') {
+        throw new Error('Invalid sync package payload');
+      }
+
+      await mergeSyncPackage(incomingPackage);
+      await Promise.all([refreshStatus(), refreshFields(), hydrateSessionMessages()]);
+
+      const elapsedMs = Math.max(0, Math.round(performance.now() - startedAt));
+      syncMetricsRef.current.importCount += 1;
+      syncMetricsRef.current.importTotalMs += elapsedMs;
+      syncMetricsRef.current.lastImportMs = elapsedMs;
+      const avgMs = Math.round(syncMetricsRef.current.importTotalMs / syncMetricsRef.current.importCount);
+      const mergedMsg = `Sync merge completed at ${new Date().toLocaleTimeString()} (${elapsedMs}ms).`;
+      setSyncStatusText(mergedMsg);
+      notify('success', `Sync import and merge complete in ${elapsedMs}ms (avg ${avgMs}ms).`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to import sync package';
+      setSyncStatusText(`Sync merge failed: ${message}`);
+      notify('error', `Sync merge failed: ${message}`, 6000);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [hydrateSessionMessages, mergeSyncPackage, notify, refreshFields, refreshStatus]);
+
   const loadSession = useCallback(async (id?: string) => {
     setIsReady(false);
     try {
@@ -245,12 +364,47 @@ const ChatInterface: React.FC = () => {
   }, [convoId, loadSession]);
 
   useEffect(() => {
+    if (!isReady) return;
+    try {
+      const seen = localStorage.getItem(ONBOARDING_STORAGE_KEY);
+      if (!seen) {
+        setShowOnboarding(true);
+      }
+    } catch {
+      setShowOnboarding(true);
+    }
+  }, [isReady]);
+
+  const dismissOnboarding = () => {
+    setShowOnboarding(false);
+    try {
+      localStorage.setItem(ONBOARDING_STORAGE_KEY, 'true');
+    } catch {
+      // Ignore persistence failures.
+    }
+  };
+
+  useEffect(() => {
     if (!isReady || isLoading) return;
     const interval = setInterval(() => {
         pushSimulationStep(0.05, 0);
     }, 4000);
     return () => clearInterval(interval);
   }, [isReady, isLoading, pushSimulationStep]);
+
+  useEffect(() => {
+    if (!bridgeError) {
+      return;
+    }
+    notify('error', `Bridge operation error: ${bridgeError}`, 6000);
+  }, [bridgeError, notify]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(toastTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+      toastTimersRef.current = {};
+    };
+  }, []);
 
   useEffect(() => {
     if (isLiveActive) {
@@ -536,6 +690,8 @@ const ChatInterface: React.FC = () => {
 
   return (
     <div className="relative flex h-full w-full bg-black/40 overflow-hidden transform-gpu" style={{ contain: 'strict' }}>
+      <ToastCenter items={toasts} onDismiss={dismissToast} />
+
       <VoiceModeOverlay
         isActive={isLiveActive}
         isModelSpeaking={isModelSpeaking}
@@ -543,17 +699,47 @@ const ChatInterface: React.FC = () => {
         onClose={handleLiveDisconnect}
       />
 
+      {showOnboarding && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
+          <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-black/70 p-6 shadow-2xl">
+            <h2 className="text-lg font-black uppercase tracking-[0.2em] text-white">Welcome To Phase 7</h2>
+            <p className="mt-3 text-sm text-gray-300 leading-relaxed">
+              Diagnostics now include live field heatmaps, sync metadata, and exportable intelligence state. Use the sidebar tabs to navigate telemetry, status, and archives.
+            </p>
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px] font-mono uppercase tracking-wider text-gray-300">
+              <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2">Status: Sync + field trends</div>
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">Archives: Snapshot + field view</div>
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">Profile: device sync tools</div>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button
+                onClick={dismissOnboarding}
+                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-black font-bold text-xs uppercase tracking-widest"
+              >
+                Enter Console
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <aside className="w-[380px] h-full flex-shrink-0 border-r hidden xl:flex flex-col bg-black/40 backdrop-blur-xl z-10" style={{ borderColor: 'var(--color-border)', contain: 'layout' }}>
         <div className="flex border-b border-white/5 bg-black/20 p-1">
           <button 
             onClick={() => setSidebarTab('telemetry')}
-            className={`flex-1 py-3 text-[9px] font-bold uppercase tracking-[0.3em] rounded-lg transition-all ${sidebarTab === 'telemetry' ? 'bg-white/10 text-[var(--color-primary)]' : 'text-gray-500 hover:text-gray-300'}`}
+            className={`flex-1 py-3 text-[9px] font-bold uppercase tracking-[0.2em] rounded-lg transition-all ${sidebarTab === 'telemetry' ? 'bg-white/10 text-[var(--color-primary)]' : 'text-gray-500 hover:text-gray-300'}`}
           >
             Diagnostics
           </button>
           <button 
+            onClick={() => setSidebarTab('status')}
+            className={`flex-1 py-3 text-[9px] font-bold uppercase tracking-[0.2em] rounded-lg transition-all ${sidebarTab === 'status' ? 'bg-white/10 text-[var(--color-primary)]' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            Status
+          </button>
+          <button 
             onClick={() => setSidebarTab('archives')}
-            className={`flex-1 py-3 text-[9px] font-bold uppercase tracking-[0.3em] rounded-lg transition-all ${sidebarTab === 'archives' ? 'bg-white/10 text-[var(--color-primary)]' : 'text-gray-500 hover:text-gray-300'}`}
+            className={`flex-1 py-3 text-[9px] font-bold uppercase tracking-[0.2em] rounded-lg transition-all ${sidebarTab === 'archives' ? 'bg-white/10 text-[var(--color-primary)]' : 'text-gray-500 hover:text-gray-300'}`}
           >
             Archives
           </button>
@@ -565,6 +751,14 @@ const ChatInterface: React.FC = () => {
             messages={messages}
             recallSimulations={recallSimulations}
             simulationWrites={simulationWrites}
+          />
+        ) : sidebarTab === 'status' ? (
+          <AtlanteanStatusPanel
+            status={status}
+            fields={fields}
+            isLoading={atlanteanLoading}
+            isRefreshingFields={isRefreshingFields}
+            refreshTelemetry={refreshTelemetry}
           />
         ) : (
           <NeuralArchives
@@ -594,6 +788,9 @@ const ChatInterface: React.FC = () => {
                                 Learn {learningCapacityPct.toFixed(1)}%
                               </span>
                             )}
+                            <span className="ml-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-0.5 text-[8px] font-mono uppercase tracking-wider text-cyan-200">
+                              {isSyncing ? 'Sync: Running' : 'Sync: Ready'}
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -807,6 +1004,10 @@ const ChatInterface: React.FC = () => {
         onVoiceChange={handleVoiceChange}
         onPreviewVoice={handlePreviewVoice}
         isPreviewingVoice={isSpeaking}
+        onExportSyncPackage={handleExportSyncPackage}
+        onImportSyncPackage={handleImportSyncPackage}
+        isSyncing={isSyncing}
+        syncStatusText={syncStatusText}
       />
     </div>
   );

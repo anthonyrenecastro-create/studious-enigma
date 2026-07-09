@@ -3,7 +3,7 @@ import torch
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from enum import Enum
 
 
@@ -72,6 +72,15 @@ class AtlanteanSyncEngine:
         self.identity = identity
         self.device_id = identity.device_id
         self.vector_clock = {self.device_id: 0}
+        self.last_merge_details: Dict[str, Any] = {
+            "timestamp": None,
+            "remote_device": None,
+            "strategy": None,
+            "concurrent": False,
+            "action": "none",
+            "remote_version": None,
+            "local_version_before": None,
+        }
     
     def prepare_sync_package(self, hot_memory):
         """
@@ -136,49 +145,73 @@ class AtlanteanSyncEngine:
         """
         remote_state = remote_package["state"]
         remote_meta = SyncMetadata.from_dict(remote_package["metadata"])
+
+        local_clock_before = self.vector_clock.copy()
+        remote_clock = remote_meta.vector_clock
+        remote_device = remote_meta.device_id
+        remote_version = remote_clock.get(remote_device, 0)
+        local_version_before = local_clock_before.get(remote_device, 0)
+
+        is_concurrent = self._is_concurrent(remote_meta, local_clock=local_clock_before)
         
         # Update vector clock (merge clocks)
         for device, version in remote_meta.vector_clock.items():
             current = self.vector_clock.get(device, 0)
             self.vector_clock[device] = max(current, version)
-        
-        # Detect concurrency
-        is_concurrent = self._is_concurrent(remote_meta)
+
+        merge_timestamp = datetime.utcnow().isoformat()
+        action = "noop"
+        merged_memory = local_memory
         
         if is_concurrent:
             print(f"Concurrent update detected from {remote_meta.device_id}, merging fields...")
-            return self._merge_fields(local_memory, remote_state, strategy)
+            merged_memory = self._merge_fields(local_memory, remote_state, strategy)
+            action = "concurrent_merge"
         else:
             # Check if remote is strictly newer
-            remote_device = remote_meta.device_id
-            remote_version = remote_meta.vector_clock[remote_device]
-            local_version = self.vector_clock.get(remote_device, 0)
-            
-            if remote_version > local_version:
+            if remote_version > local_version_before:
                 print(f"Remote is newer, applying update from {remote_device}")
-                return self._apply_remote(remote_state)
+                merged_memory = self._apply_remote(remote_state)
+                action = "remote_newer_applied"
             else:
                 print("Local is up-to-date, no merge needed")
-                return local_memory
+                merged_memory = local_memory
+                action = "noop"
+
+        self.last_merge_details = {
+            "timestamp": merge_timestamp,
+            "remote_device": remote_device,
+            "strategy": strategy.value if isinstance(strategy, MergeStrategy) else str(strategy),
+            "concurrent": bool(is_concurrent),
+            "action": action,
+            "remote_version": int(remote_version),
+            "local_version_before": int(local_version_before),
+            "vector_clock": self.vector_clock.copy(),
+        }
+
+        return merged_memory
     
-    def _is_concurrent(self, remote_meta):
+    def _is_concurrent(self, remote_meta, local_clock=None):
         """
         Check if remote update is concurrent with local state using vector clocks.
         
         Returns:
             True if concurrent (requires merging), False otherwise
         """
+        if local_clock is None:
+            local_clock = self.vector_clock
+
         remote_clock = remote_meta.vector_clock
         
         # Check if either happened-before relationship exists
         local_before_remote = all(
-            self.vector_clock.get(d, 0) <= remote_clock.get(d, 0)
-            for d in set(self.vector_clock.keys()) | set(remote_clock.keys())
+            local_clock.get(d, 0) <= remote_clock.get(d, 0)
+            for d in set(local_clock.keys()) | set(remote_clock.keys())
         )
         
         remote_before_local = all(
-            remote_clock.get(d, 0) <= self.vector_clock.get(d, 0)
-            for d in set(self.vector_clock.keys()) | set(remote_clock.keys())
+            remote_clock.get(d, 0) <= local_clock.get(d, 0)
+            for d in set(local_clock.keys()) | set(remote_clock.keys())
         )
         
         # Concurrent if neither happened before the other

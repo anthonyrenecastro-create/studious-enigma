@@ -8,6 +8,7 @@ import {
   type AtlanteanSnapshotRecord,
 } from '../services/atlanteanService';
 import Icon from './Icon';
+import HeatmapPanel from './HeatmapPanel';
 
 interface NeuralArchivesProps {
   currentSessionId: string;
@@ -24,6 +25,7 @@ const NeuralArchives: React.FC<NeuralArchivesProps> = ({
   const [loading, setLoading] = useState(true);
   const [isCreatingSnapshot, setIsCreatingSnapshot] = useState(false);
   const [busySnapshotId, setBusySnapshotId] = useState<string | null>(null);
+  const [mode, setMode] = useState<'snapshots' | 'fields'>('snapshots');
 
   const loadArchives = async () => {
     try {
@@ -103,6 +105,20 @@ const NeuralArchives: React.FC<NeuralArchivesProps> = ({
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-black/20">
       <div className="p-4 border-b border-white/5">
+        <div className="mb-3 flex items-center gap-1 rounded-lg border border-white/10 bg-black/20 p-1">
+          <button
+            onClick={() => setMode('snapshots')}
+            className={`flex-1 py-2 text-[9px] font-bold uppercase tracking-[0.2em] rounded transition-all ${mode === 'snapshots' ? 'bg-white/10 text-[var(--color-primary)]' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            Snapshots
+          </button>
+          <button
+            onClick={() => setMode('fields')}
+            className={`flex-1 py-2 text-[9px] font-bold uppercase tracking-[0.2em] rounded transition-all ${mode === 'fields' ? 'bg-white/10 text-[var(--color-primary)]' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            Field View
+          </button>
+        </div>
         <button 
           onClick={onNewSession}
           className="w-full flex items-center justify-center gap-2 py-3 bg-[var(--color-primary)] text-black font-bold text-[10px] uppercase tracking-[0.2em] rounded-xl hover:opacity-90 transition-all active:scale-95"
@@ -120,6 +136,9 @@ const NeuralArchives: React.FC<NeuralArchivesProps> = ({
         </button>
       </div>
 
+      {mode === 'fields' ? (
+        <HeatmapPanel currentSessionId={currentSessionId} />
+      ) : (
       <div className="flex-1 overflow-y-auto scrollbar-hide p-4 space-y-3">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3 opacity-20">
@@ -172,6 +191,7 @@ const NeuralArchives: React.FC<NeuralArchivesProps> = ({
           ))
         )}
       </div>
+      )}
       
       <div className="p-4 border-t border-white/5 bg-black/40">
         <div className="flex items-center gap-2 text-[9px] font-mono text-gray-600 uppercase">

@@ -116,6 +116,18 @@ class AtlanteanQuadraBridge:
         if self.identity:
             self.sync_engine = AtlanteanSyncEngine(self.identity)
 
+        self.sync_metadata: Dict[str, Any] = {
+            'last_merged_device': None,
+            'last_merge_strategy': None,
+            'last_merged_at': None,
+            'conflict_counters': {
+                'total_merges': 0,
+                'concurrent_merges': 0,
+                'remote_updates_applied': 0,
+                'noop_merges': 0,
+            },
+        }
+
         # Latest HRM snapshot — kept current by callers via set_hrm_snapshot().
         self._hrm_snapshot: Dict[str, Any] = {}
 
@@ -784,15 +796,39 @@ class AtlanteanQuadraBridge:
         """
         if not self.sync_engine:
             raise RuntimeError("Sync requires cryptographic identity")
+
+        if isinstance(strategy, str):
+            strategy = MergeStrategy(strategy)
         
         merged = self.sync_engine.merge(
             self.hot_memory,
             sync_package,
             strategy=strategy
         )
+
+        merge_details = getattr(self.sync_engine, 'last_merge_details', {}) or {}
+        action = merge_details.get('action', 'noop')
+
+        counters = self.sync_metadata['conflict_counters']
+        counters['total_merges'] = int(counters.get('total_merges', 0)) + 1
+        if action == 'concurrent_merge':
+            counters['concurrent_merges'] = int(counters.get('concurrent_merges', 0)) + 1
+        elif action == 'remote_newer_applied':
+            counters['remote_updates_applied'] = int(counters.get('remote_updates_applied', 0)) + 1
+        else:
+            counters['noop_merges'] = int(counters.get('noop_merges', 0)) + 1
+
+        self.sync_metadata['last_merged_device'] = merge_details.get('remote_device')
+        self.sync_metadata['last_merge_strategy'] = merge_details.get('strategy', strategy.value)
+        self.sync_metadata['last_merged_at'] = merge_details.get('timestamp', datetime.utcnow().isoformat())
         
         self.hot_memory = merged
         self.bridge.hot = merged
+
+        return {
+            **merge_details,
+            'sync_metadata': self.sync_metadata,
+        }
     
     # ========== Utilities ==========
     
@@ -811,7 +847,8 @@ class AtlanteanQuadraBridge:
                 'phi1_mean': float(self.hot_memory.phi1.mean()),
                 'phi5_mean': float(self.hot_memory.phi5.mean()),
                 'Phi': float(self.hot_memory.Phi.item())
-            }
+            },
+            'sync': self.sync_metadata,
         }
     
     @staticmethod

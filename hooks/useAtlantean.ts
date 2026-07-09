@@ -24,6 +24,27 @@ import type {
   LearningEventType 
 } from '../services/atlanteanService';
 
+export interface RefreshTelemetryEntry {
+  count: number;
+  lastMs: number;
+  averageMs: number;
+  lastStartedAt: number | null;
+  lastCompletedAt: number | null;
+}
+
+export interface RefreshTelemetry {
+  status: RefreshTelemetryEntry;
+  fields: RefreshTelemetryEntry;
+}
+
+const EMPTY_REFRESH_ENTRY: RefreshTelemetryEntry = {
+  count: 0,
+  lastMs: 0,
+  averageMs: 0,
+  lastStartedAt: null,
+  lastCompletedAt: null,
+};
+
 export interface UseAtlanteanReturn {
   // Conversation state
   messages: Message[];
@@ -33,7 +54,9 @@ export interface UseAtlanteanReturn {
   fields: FieldData | null;
   isHealthy: boolean;
   isLoading: boolean;
+  isRefreshingFields: boolean;
   error: string | null;
+  refreshTelemetry: RefreshTelemetry;
   
   // Core functions
   query: (input: string, provider?: 'gemini' | 'edenai' | 'mock') => Promise<string>;
@@ -51,7 +74,10 @@ export interface UseAtlanteanReturn {
   
   // Sync functions
   prepareSyncPackage: () => Promise<any>;
-  mergeSyncPackage: (pkg: any) => Promise<void>;
+  mergeSyncPackage: (
+    pkg: any,
+    strategy?: 'conservative' | 'field_average' | 'last_write_wins' | 'max_energy' | 'max_plasticity'
+  ) => Promise<void>;
   
   // Utilities
   refreshStatus: () => Promise<void>;
@@ -66,7 +92,33 @@ export function useAtlantean(): UseAtlanteanReturn {
   const [fields, setFields] = useState<FieldData | null>(null);
   const [isHealthy, setIsHealthy] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshingFields, setIsRefreshingFields] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshTelemetry, setRefreshTelemetry] = useState<RefreshTelemetry>({
+    status: { ...EMPTY_REFRESH_ENTRY },
+    fields: { ...EMPTY_REFRESH_ENTRY },
+  });
+
+  const recordRefreshTelemetry = useCallback((key: keyof RefreshTelemetry, startedAt: number, completedAt: number) => {
+    const elapsedMs = Math.max(0, Math.round(completedAt - startedAt));
+    setRefreshTelemetry((prev) => {
+      const current = prev[key];
+      const nextCount = current.count + 1;
+      const nextAverageMs =
+        nextCount === 1 ? elapsedMs : Math.round(((current.averageMs * current.count) + elapsedMs) / nextCount);
+
+      return {
+        ...prev,
+        [key]: {
+          count: nextCount,
+          lastMs: elapsedMs,
+          averageMs: nextAverageMs,
+          lastStartedAt: Math.round(startedAt),
+          lastCompletedAt: Math.round(completedAt),
+        },
+      };
+    });
+  }, []);
 
   const hydrateChatHistory = useCallback(async () => {
     try {
@@ -115,24 +167,34 @@ export function useAtlantean(): UseAtlanteanReturn {
   
   // Refresh status
   const refreshStatus = useCallback(async () => {
+    const startedAt = performance.now();
     try {
       const newStatus = await atlantean.getStatus();
       setStatus(newStatus);
       setError(null);
+      recordRefreshTelemetry('status', startedAt, performance.now());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to get status');
     }
-  }, []);
+  }, [recordRefreshTelemetry]);
   
   // Refresh fields
   const refreshFields = useCallback(async () => {
+    setIsRefreshingFields(true);
+    const startedAt = performance.now();
     try {
       const newFields = await atlantean.getFields();
       setFields(newFields);
+      setError(null);
+      recordRefreshTelemetry('fields', startedAt, performance.now());
     } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to get fields';
+      setError(errorMsg);
       console.error('Failed to get fields:', err);
+    } finally {
+      setIsRefreshingFields(false);
     }
-  }, []);
+  }, [recordRefreshTelemetry]);
   
   // Process query
   const query = useCallback(async (
@@ -244,10 +306,13 @@ export function useAtlantean(): UseAtlanteanReturn {
   }, []);
   
   // Merge sync package
-  const mergeSyncPackage = useCallback(async (pkg: any): Promise<void> => {
+  const mergeSyncPackage = useCallback(async (
+    pkg: any,
+    strategy: 'conservative' | 'field_average' | 'last_write_wins' | 'max_energy' | 'max_plasticity' = 'conservative'
+  ): Promise<void> => {
     try {
       setError(null);
-      const result = await atlantean.mergeSyncPackage(pkg);
+      const result = await atlantean.mergeSyncPackage(pkg, strategy);
       setStatus(result.status);
       await refreshFields();
     } catch (err) {
@@ -277,7 +342,9 @@ export function useAtlantean(): UseAtlanteanReturn {
     fields,
     isHealthy,
     isLoading,
+    isRefreshingFields,
     error,
+    refreshTelemetry,
     query,
     triggerEvent,
     setMessages,

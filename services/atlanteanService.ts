@@ -133,6 +133,21 @@ export interface AtlanteanStatus {
     phi5_mean: number;
     Phi: number;
   };
+  sync?: SyncStatusMetadata;
+}
+
+export interface SyncConflictCounters {
+  total_merges: number;
+  concurrent_merges: number;
+  remote_updates_applied: number;
+  noop_merges: number;
+}
+
+export interface SyncStatusMetadata {
+  last_merged_device: string | null;
+  last_merge_strategy: string | null;
+  last_merged_at: string | null;
+  conflict_counters: SyncConflictCounters;
 }
 
 export interface FieldData {
@@ -608,14 +623,15 @@ export async function prepareSyncPackage(): Promise<{ package: any }> {
  * Merge sync package from another device
  */
 export async function mergeSyncPackage(
-  syncPackage: any
-): Promise<{ success: boolean; status: AtlanteanStatus }> {
+  syncPackage: any,
+  strategy: 'conservative' | 'field_average' | 'last_write_wins' | 'max_energy' | 'max_plasticity' = 'conservative'
+): Promise<{ success: boolean; status: AtlanteanStatus; sync?: any }> {
   const response = await fetch(`${getAtlanteanApiBase()}/sync/merge`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ package: syncPackage }),
+    body: JSON.stringify({ package: syncPackage, strategy }),
   });
   
   if (!response.ok) {

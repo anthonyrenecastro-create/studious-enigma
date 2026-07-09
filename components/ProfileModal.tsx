@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { UserProfile } from '../types';
 import Icon from './Icon';
 import { useTheme } from '../context/ThemeContext';
@@ -14,6 +14,10 @@ interface ProfileModalProps {
   onVoiceChange: (voice: TtsVoice) => void;
   onPreviewVoice: (voice: TtsVoice) => void;
   isPreviewingVoice?: boolean;
+  onExportSyncPackage: () => Promise<void> | void;
+  onImportSyncPackage: (file: File) => Promise<void> | void;
+  isSyncing?: boolean;
+  syncStatusText?: string;
 }
 
 const AVATARS = ['👤', '👩‍🚀', '🧑‍💻', '🕵️', '👽', '🤖', '🧠', '✨'];
@@ -27,9 +31,14 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
   onVoiceChange,
   onPreviewVoice,
   isPreviewingVoice = false,
+  onExportSyncPackage,
+  onImportSyncPackage,
+  isSyncing = false,
+  syncStatusText,
 }) => {
   const [profile, setProfile] = useState(currentProfile);
   const { theme, saveCustomTheme } = useTheme();
+  const syncFileInputRef = useRef<HTMLInputElement>(null);
 
   const [customPrimary, setCustomPrimary] = useState(theme.colors['--color-primary']);
   const [customAccent, setCustomAccent] = useState(theme.colors['--color-accent']);
@@ -56,6 +65,23 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
     const originalAccent = theme.colors['--color-accent'];
     if (customPrimary !== originalPrimary || customAccent !== originalAccent) {
       saveCustomTheme(customPrimary, customAccent);
+    }
+  };
+
+  const handleImportSyncClick = () => {
+    syncFileInputRef.current?.click();
+  };
+
+  const handleImportSyncChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      await onImportSyncPackage(file);
+    } finally {
+      e.target.value = '';
     }
   };
 
@@ -185,6 +211,48 @@ const ProfileModal: React.FC<ProfileModalProps> = ({
               >
                 {isPreviewingVoice ? 'Previewing...' : 'Preview Voice'}
               </button>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold mb-3" style={{ color: 'var(--color-primary)' }}>Device Sync</h3>
+            <div className="space-y-3 pl-2 border-l-2" style={{ borderColor: 'var(--color-border)' }}>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={onExportSyncPackage}
+                  disabled={isSyncing}
+                  className="px-3 py-2 text-xs font-semibold rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  style={{
+                    borderColor: 'var(--color-border-accent)',
+                    color: 'var(--color-text-primary)',
+                    backgroundColor: 'rgba(255,255,255,0.04)',
+                  }}
+                >
+                  Export Sync Package
+                </button>
+                <button
+                  onClick={handleImportSyncClick}
+                  disabled={isSyncing}
+                  className="px-3 py-2 text-xs font-semibold rounded-md border transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                  style={{
+                    borderColor: 'var(--color-border-accent)',
+                    color: 'var(--color-text-primary)',
+                    backgroundColor: 'rgba(255,255,255,0.04)',
+                  }}
+                >
+                  Import And Merge
+                </button>
+                <input
+                  ref={syncFileInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={handleImportSyncChange}
+                  className="hidden"
+                />
+              </div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-gray-400">
+                {syncStatusText || 'No sync activity yet.'}
+              </div>
             </div>
           </div>
         </div>

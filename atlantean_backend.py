@@ -1586,6 +1586,7 @@ def merge_sync():
     """Merge sync package from another device."""
     data = request.json
     package = data.get('package')
+    strategy = data.get('strategy', 'conservative')
     
     if not package:
         return jsonify({'error': 'No sync package'}), 400
@@ -1593,12 +1594,13 @@ def merge_sync():
     b = get_bridge()
     
     try:
-        b.merge_from_device(package)
+        merge_result = b.merge_from_device(package, strategy=strategy)
         _save_bridge_to_redis('default', b)
         
         return jsonify({
             'success': True,
-            'status': b.get_status()
+            'status': b.get_status(),
+            'sync': merge_result,
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
